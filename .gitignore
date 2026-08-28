@@ -1,0 +1,6 @@
+.DS_Store
+venv/
+data/
+models/baseline/v*/
+models/transformer/results/
+models/transformer/v*/
