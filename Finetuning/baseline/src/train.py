@@ -15,7 +15,7 @@ from sklearn.metrics import classification_report, f1_score
 
 VERSION = "v1.0.0"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DATA_DIR = PROJECT_ROOT / "data" / "processed"
+DATA_DIR = PROJECT_ROOT / "Finetuning" / "data" / "processed"
 OUTPUT_DIR = PROJECT_ROOT / "models" / "baseline" / VERSION
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 

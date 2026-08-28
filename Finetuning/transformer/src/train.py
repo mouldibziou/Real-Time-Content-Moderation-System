@@ -22,7 +22,7 @@ import datasets
 from torch.nn import BCEWithLogitsLoss
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DATA_DIR = PROJECT_ROOT / "data"
+DATA_DIR = PROJECT_ROOT / "Finetuning" / "data"
 DEV_DATA_PATH = DATA_DIR / "processed" / "dev.csv"
 TEST_DATA_PATH = DATA_DIR / "processed" / "test.csv"
 TRAIN_DATA_PATH = DATA_DIR / "processed" / "train.csv"
