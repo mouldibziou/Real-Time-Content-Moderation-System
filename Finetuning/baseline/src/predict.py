@@ -1,10 +1,11 @@
 import joblib
 import numpy as np
 import os
+from pathlib import Path
 
 VERSION = "v1.0.0"
-BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", VERSION))
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+OUTPUT_DIR = PROJECT_ROOT / "models" / "baseline" / VERSION
 
 col_labels    = ["toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"]
 vectorizer    = joblib.load(f"{OUTPUT_DIR}/tfidf_vectorizer.pkl")

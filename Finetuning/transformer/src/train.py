@@ -27,7 +27,7 @@ DEV_DATA_PATH = DATA_DIR / "processed" / "dev.csv"
 TEST_DATA_PATH = DATA_DIR / "processed" / "test.csv"
 TRAIN_DATA_PATH = DATA_DIR / "processed" / "train.csv"
 
-OUTPUT_DIR = PROJECT_ROOT / "models" / "transformer" / "results"
+OUTPUT_DIR = PROJECT_ROOT / "models"
 
 TEXT_COL = "comment_text"
 LABEL_COLS = ['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']

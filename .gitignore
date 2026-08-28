@@ -2,5 +2,5 @@
 venv/
 data/
 models/baseline/v*/
-models/transformer/results/
-models/transformer/v*/
+models/distilbert/v*/
+models/hatebert/v*/

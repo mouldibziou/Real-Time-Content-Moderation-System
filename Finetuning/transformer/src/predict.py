@@ -4,11 +4,11 @@ import gc
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-MODEL_VERSION_DIR = PROJECT_ROOT / "models" / "transformer" / "v2.0.0"
+MODEL_DIR = PROJECT_ROOT / "models"
 
 MODEL_PATHS = {
-    "DistilBERT": MODEL_VERSION_DIR / "DistilBERT",
-    "HateBERT": MODEL_VERSION_DIR / "HateBERT",
+    "DistilBERT": MODEL_DIR / "distilbert" / "v2.0.0",
+    "HateBERT": MODEL_DIR / "hatebert" / "v2.0.0",
 }
 
 LABEL_COLS = [
