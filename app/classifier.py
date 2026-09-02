@@ -1,4 +1,14 @@
 import torch
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class LabelPrediction:
+    probability: float
+    predicted: bool
+
+@dataclass(frozen=True)
+class ClassificationResult:
+    labels: dict[str, LabelPrediction]
 
 class ToxicityClassifier:
     def __init__(
@@ -22,9 +32,8 @@ class ToxicityClassifier:
             device=self.device
         )
 
-    def predict(self, text:str):
-        """Classifies a unique input sequence,
-        returns the multi-label result as a JSON object"""
+    def predict(self, text:str) -> ClassificationResult:
+        """Classifies a unique input sequence"""
 
         tokenized_text = self.tokenizer(
             text,
@@ -42,14 +51,21 @@ class ToxicityClassifier:
 
             predictions = probs >= self.thresholds
 
-        result = {
-            label: int(pred.item())
-            for label, pred in zip(self.labels, predictions)
-        }
+        return ClassificationResult(
+            labels={
+                label: LabelPrediction(
+                    probability=float(probability.item()),
+                    predicted=bool(predicted.item()),
+                )
+                for label, probability, predicted in zip(
+                    self.labels,
+                    probs,
+                    predictions,
+                )
+            }
+        )
 
-        return result
-
-    def predict_batch(self, texts:list[str]):
+    def predict_batch(self, texts:list[str]) -> list[ClassificationResult]:
         """Classifies a batch of input sequences,
         returns the multi-label result as a list of dictionaries"""
 
@@ -70,9 +86,20 @@ class ToxicityClassifier:
             predictions = probs >= self.thresholds
 
         results = [
-            {label: int(pred.item())
-             for label, pred in zip(self.labels, row)}
-            for row in predictions
+            ClassificationResult(
+                labels={
+                    label: LabelPrediction(
+                        probability=float(probability.item()),
+                        predicted=bool(predicted.item()),
+                    )
+                    for label, probability, predicted in zip(
+                        self.labels,
+                        probability_row,
+                        prediction_row,
+                    )
+                }
+            )
+            for probability_row, prediction_row in zip(probs, predictions)
         ]
 
         return results
