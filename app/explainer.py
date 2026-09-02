@@ -45,14 +45,24 @@ class ToxicityExplainer:
         self.n_steps = n_steps
 
     def explain(self, text: str, label: str) -> AttributionResult:
+        return self.explain_batch([text], label)[0]
+
+    def explain_batch(
+        self,
+        texts: list[str],
+        label: str,
+    ) -> list[AttributionResult]:
         if label not in self._label_to_index:
             raise ValueError(f"Unknown label: {label}")
 
         if self.tokenizer.pad_token_id is None:
             raise ValueError("Tokenizer must define pad_token_id")
 
+        if not texts:
+            return []
+
         encoded = self.tokenizer(
-            text,
+            texts,
             return_tensors="pt",
             truncation=True,
             padding=True,
@@ -77,44 +87,55 @@ class ToxicityExplainer:
             return_convergence_delta=True,
         )
 
-        token_scores = attributions.sum(dim=-1)[0]
-        display_mask = attention_mask[0].bool() & ~special_tokens_mask[0]
-        displayed_scores = token_scores[display_mask]
-        max_absolute_score = (
-            displayed_scores.abs().max().item()
-            if displayed_scores.numel() > 0
-            else 0.0
-        )
-        tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0].tolist())
-
-        spans = []
-        for token, score, should_display in zip(
-            tokens,
-            token_scores,
-            display_mask,
+        token_scores_by_text = attributions.sum(dim=-1)
+        display_mask_by_text = attention_mask.bool() & ~special_tokens_mask
+        results = []
+        for input_id_row, token_scores, display_mask, delta in zip(
+            input_ids,
+            token_scores_by_text,
+            display_mask_by_text,
+            convergence_delta,
         ):
-            if not should_display.item():
-                continue
-
-            signed_score = score.item()
-            normalized_importance = (
-                abs(signed_score) / max_absolute_score
-                if max_absolute_score > 0.0
+            displayed_scores = token_scores[display_mask]
+            max_absolute_score = (
+                displayed_scores.abs().max().item()
+                if displayed_scores.numel() > 0
                 else 0.0
             )
-            spans.append(
-                AttributedSpan(
-                    text=token,
-                    score=signed_score,
-                    normalized_importance=normalized_importance,
+            tokens = self.tokenizer.convert_ids_to_tokens(input_id_row.tolist())
+
+            spans = []
+            for token, score, should_display in zip(
+                tokens,
+                token_scores,
+                display_mask,
+            ):
+                if not should_display.item():
+                    continue
+
+                signed_score = score.item()
+                normalized_importance = (
+                    abs(signed_score) / max_absolute_score
+                    if max_absolute_score > 0.0
+                    else 0.0
+                )
+                spans.append(
+                    AttributedSpan(
+                        text=token,
+                        score=signed_score,
+                        normalized_importance=normalized_importance,
+                    )
+                )
+
+            results.append(
+                AttributionResult(
+                    label=label,
+                    spans=tuple(spans),
+                    convergence_delta=delta.item(),
                 )
             )
 
-        return AttributionResult(
-            label=label,
-            spans=tuple(spans),
-            convergence_delta=convergence_delta.item(),
-        )
+        return results
 
     
     def _forward(

@@ -11,12 +11,13 @@ class FakeTokenizer:
     pad_token_id = 0
 
     def __call__(self, text: str, **kwargs) -> BatchEncoding:
+        batch_size = len(text) if isinstance(text, list) else 1
         return BatchEncoding(
             {
-                "input_ids": torch.tensor([[101, 5, 6, 102, 0]]),
-                "attention_mask": torch.tensor([[1, 1, 1, 1, 0]]),
-                "token_type_ids": torch.tensor([[0, 0, 0, 0, 0]]),
-                "special_tokens_mask": torch.tensor([[1, 0, 0, 1, 1]]),
+                "input_ids": torch.tensor([[101, 5, 6, 102, 0]]).repeat(batch_size, 1),
+                "attention_mask": torch.tensor([[1, 1, 1, 1, 0]]).repeat(batch_size, 1),
+                "token_type_ids": torch.tensor([[0, 0, 0, 0, 0]]).repeat(batch_size, 1),
+                "special_tokens_mask": torch.tensor([[1, 0, 0, 1, 1]]).repeat(batch_size, 1),
             }
         )
 
@@ -79,3 +80,11 @@ class ToxicityExplainerTests(TestCase):
     def test_explain_rejects_unknown_label(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unknown label"):
             self.explainer.explain("ignored", "missing")
+
+    def test_explain_batch_returns_one_result_per_text(self) -> None:
+        explanations = self.explainer.explain_batch(["one", "two"], "first")
+
+        self.assertEqual(len(explanations), 2)
+        for explanation in explanations:
+            self.assertEqual(explanation.label, "first")
+            self.assertEqual([span.text for span in explanation.spans], ["alpha", "beta"])
