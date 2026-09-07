@@ -11,6 +11,9 @@ class ClassificationResult:
     labels: dict[str, LabelPrediction]
 
 class ToxicityClassifier:
+    """
+    needs the model in inference mode, to get the output logits.
+    """
     def __init__(
             self,
             model,

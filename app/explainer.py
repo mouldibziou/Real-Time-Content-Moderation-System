@@ -17,6 +17,9 @@ class AttributionResult:
     convergence_delta: float | None = None
 
 class ToxicityExplainer:
+    """
+    needs the model in training mode, to get the gradients.
+    """
     def __init__(
             self,
             model,
