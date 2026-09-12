@@ -8,7 +8,7 @@ class RuntimeSettings:
     model_dir: Path = Path("models/distilbert/v2.0.0")
     labels: tuple[str, ...] = ('toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate')
     thresholds: tuple[float, ...] = (0.74, 0.45, 0.74, 0.59, 0.61, 0.76)
-    device: str = "cpu"
+    device: str = "mps"
     n_steps: int = 32
 
     def __post_init__(self) -> None:
