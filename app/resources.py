@@ -31,7 +31,7 @@ def load_resources(settings: RuntimeSettings) -> ModelResources:
 
     if tokenizer.pad_token_id is None:
         raise ValueError("Explainer needs 'pad token' to construct its baseline," \
-        "Tokenizer should return a 'pad_token_id'")
+        "Tokenizer should return a 'pad_token_id' token")
 
     model = AutoModelForSequenceClassification.from_pretrained(
         settings.model_dir,

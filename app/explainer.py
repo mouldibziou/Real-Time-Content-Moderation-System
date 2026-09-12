@@ -18,7 +18,7 @@ class AttributionResult:
 
 class ToxicityExplainer:
     """
-    needs the model in training mode, to get the gradients.
+    need gradient tracking, (not training mode). The service should run in eval mode.
     """
     def __init__(
             self,
