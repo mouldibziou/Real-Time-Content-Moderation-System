@@ -1,5 +1,7 @@
 from collections.abc import Callable
 
+from app.classifier import ClassificationResult
+from app.explainer import AttributionResult
 from app.services import ApplicationServices, build_services
 from app.settings import RuntimeSettings
 
@@ -28,4 +30,26 @@ class ApplicationRuntime:
         if self.is_ready():
             return
 
-        self._services = self._services_builder(self._settings)    
+        self._services = self._services_builder(self._settings) 
+
+    def predict(self, text: str) -> ClassificationResult:
+        services = self._require_services()
+        return services.classifier.predict(text)
+
+    def predict_batch(self, texts: list[str]) -> list[ClassificationResult]:
+        services = self._require_services()
+        return services.classifier.predict_batch(texts)
+
+    def explain(self, text: str, label: str) -> AttributionResult:
+        services = self._require_services()
+        return services.explainer.explain(text, label)
+
+    def explain_batch(self, texts: list[str], label: str) -> list[AttributionResult]:
+        services = self._require_services()
+        return services.explainer.explain_batch(texts, label)
+        
+    def _require_services(self) -> ApplicationServices:
+        if self._services is None:
+            raise RuntimeError("Application runtime has not been started")
+
+        return self._services
