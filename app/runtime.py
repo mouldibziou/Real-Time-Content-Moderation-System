@@ -32,6 +32,15 @@ class ApplicationRuntime:
 
         self._services = self._services_builder(self._settings) 
 
+    def stop(self) -> None:
+        """
+        Releases only the runtime's references and allows a later restart
+
+        NOTE: During shutdown, services still exist for the active operation, 
+        but the runtime should already be unready
+        """
+        self._services = None
+
     def predict(self, text: str) -> ClassificationResult:
         services = self._require_services()
         return services.classifier.predict(text)
