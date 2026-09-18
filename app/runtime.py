@@ -78,7 +78,8 @@ class ApplicationRuntime:
             self._end_operation()
 
     def predict_batch(self, texts: list[str]) -> list[ClassificationResult]:
-        self._validate_texts(texts)
+        self._validate_texts(texts, 
+                             max_batch_size=self._settings.max_prediction_batch_size)
         services = self._begin_operation()
         try:
             return services.classifier.predict_batch(texts)
@@ -87,6 +88,7 @@ class ApplicationRuntime:
 
     def explain(self, text: str, label: str) -> AttributionResult:
         self._validate_text(text)
+        self._validate_label(label)
         services = self._begin_operation()
         try:
             return services.explainer.explain(text, label)
@@ -94,7 +96,9 @@ class ApplicationRuntime:
             self._end_operation()
 
     def explain_batch(self, texts: list[str], label: str) -> list[AttributionResult]:
-        self._validate_texts(texts)
+        self._validate_texts(texts, 
+                             max_batch_size=self._settings.max_explanation_batch_size)
+        self._validate_label(label)
         services = self._begin_operation()
         try:
             return services.explainer.explain_batch(texts, label)
@@ -121,22 +125,36 @@ class ApplicationRuntime:
             self._operation_active = False
             self._condition.notify_all() #notify_all() makes waiting callers eligible to resume
 
-    def _validate_text(self, text: str) -> None:
+    def _validate_text(self, text: str, idx: int = -1) -> None:
+        index_info = f"Texts[{idx}]" if idx != -1 else "Text"
         if not isinstance(text, str):
-            raise TypeError("Text must be a string")
+            raise TypeError(f"{index_info} must be a string")
 
         if len(text) > self._settings.max_text_chars:
-            raise ValueError(f"Text length should be under {self._settings.max_text_chars}")
+            raise ValueError(f"{index_info} length must be at most {self._settings.max_text_chars}")
         
         if text.strip() == "":
-            raise ValueError("Text must contain non-whitespace characters")
+            raise ValueError(f"{index_info} must contain non-whitespace characters")
 
-    def _validate_texts(self, texts: list[str]) -> None:
+    def _validate_texts(self, texts: list[str], *, max_batch_size: int) -> None:
         if not isinstance(texts, list):
             raise TypeError("The input must be a list")
         
         if len(texts) == 0:
             raise ValueError("Input list should not be empty")
+
+        if len(texts) > max_batch_size:
+            raise ValueError(f"Input batch size must be at most {max_batch_size}")
         
-        for text in texts:
-            self._validate_text(text)
+        for idx ,text in enumerate(texts):
+            self._validate_text(text, idx)
+
+    def _validate_label(self, label: str) -> None:
+        """
+        Validates explanation labels before reservation
+        """
+        if not isinstance(label, str):
+            raise TypeError("Explanation label must be a string")
+        if not (label in self._settings.labels):
+            raise ValueError(f"Provided explanation label {label},\
+                              is not one of these labels {self._settings.labels}")

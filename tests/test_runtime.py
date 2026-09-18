@@ -36,7 +36,7 @@ class ObservedCondition(Condition):
 
 class ApplicationRuntimeTests(TestCase):
     def setUp(self):
-        self.settings = RuntimeSettings(device="cpu")
+        self.settings = RuntimeSettings(device="cpu", max_prediction_batch_size=4, max_explanation_batch_size=4)
         self.classifier = Mock(spec=ToxicityClassifier)
         self.explainer = Mock(spec=ToxicityExplainer)
         self.classifier.predict.return_value = ClassificationResult(labels={})
@@ -254,7 +254,7 @@ class SingleTextValidationTests(TestCase):
         explainer = Mock(spec=ToxicityExplainer)
         services = ApplicationServices(classifier, explainer)
         builder = Mock(return_value=services)
-        return ApplicationRuntime(RuntimeSettings(device="cpu"), services_builder=builder), services, builder
+        return ApplicationRuntime(RuntimeSettings(device="cpu", max_prediction_batch_size=4, max_explanation_batch_size=4), services_builder=builder), services, builder
 
     def test_invalid_text_does_not_leave_a_reservation_or_call_services(self):
         invalid_inputs = ((None, TypeError), (123, TypeError), ([], TypeError),
@@ -299,7 +299,7 @@ class BatchTextValidationTests(TestCase):
     def make_runtime(self):
         services = ApplicationServices(Mock(spec=ToxicityClassifier), Mock(spec=ToxicityExplainer))
         builder = Mock(return_value=services)
-        return ApplicationRuntime(RuntimeSettings(device="cpu"), services_builder=builder), services
+        return ApplicationRuntime(RuntimeSettings(device="cpu", max_prediction_batch_size=4, max_explanation_batch_size=4), services_builder=builder), services
 
     def test_invalid_batches_are_rejected_before_model_reservation(self):
         cases = (

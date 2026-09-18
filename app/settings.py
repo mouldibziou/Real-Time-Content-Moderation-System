@@ -11,6 +11,15 @@ class RuntimeSettings:
     device: str = "mps"
     n_steps: int = 32
     max_text_chars: int = 10_000
+    """
+    NOTE: operation wait timeout in seconds, 
+    max prediction ,and explanation batch sizes
+    are provisional limits for deployment,
+    these will be tuned later after real-world measurements.
+    """
+    operation_wait_timeout_seconds: float = 30.0
+    max_prediction_batch_size: int = 64
+    max_explanation_batch_size: int = 8
 
     def __post_init__(self) -> None:
         if not isinstance(self.max_length, int) or type(self.max_length) is bool:
@@ -33,5 +42,17 @@ class RuntimeSettings:
             raise ValueError("Threshold values must be finite and between 0 and 1 inclusive")
         if not isinstance(self.max_text_chars, int) or type(self.max_text_chars) is bool:
             raise TypeError("Maximum text characters must be an integer")
-        if self.max_text_chars < 0:
-            raise ValueError("Maximum tech characters must be positive")
+        if self.max_text_chars < 1:
+            raise ValueError("Maximum text characters must be positive")
+        if not isinstance(self.max_prediction_batch_size, int) or type(self.max_prediction_batch_size) is bool:
+            raise TypeError("Maximum prediction batch size must be an integer")
+        if self.max_prediction_batch_size < 1:
+            raise ValueError("Maximum prediction batch size must be positive")
+        if not isinstance(self.max_explanation_batch_size, int) or type(self.max_explanation_batch_size) is bool:
+            raise TypeError("Maximum explanation batch size must be an integer")
+        if self.max_explanation_batch_size < 1:
+            raise ValueError("Maximum explanation batch size must be positive")
+        if not isinstance(self.operation_wait_timeout_seconds, (float, int)) or type(self.operation_wait_timeout_seconds) is bool:
+            raise TypeError("Operation wait timeout must be a float or an integer")
+        if not isfinite(self.operation_wait_timeout_seconds) or (self.operation_wait_timeout_seconds <= 0):
+            raise ValueError("Operation wait timeout must be finite and geater than zero")
