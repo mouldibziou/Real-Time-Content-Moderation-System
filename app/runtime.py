@@ -70,6 +70,7 @@ class ApplicationRuntime:
             self._state = RuntimeState.STOPPED
 
     def predict(self, text: str) -> ClassificationResult:
+        self._validate_text(text)
         services = self._begin_operation()
         try:
             return services.classifier.predict(text)
@@ -77,6 +78,7 @@ class ApplicationRuntime:
             self._end_operation()
 
     def predict_batch(self, texts: list[str]) -> list[ClassificationResult]:
+        self._validate_texts(texts)
         services = self._begin_operation()
         try:
             return services.classifier.predict_batch(texts)
@@ -84,6 +86,7 @@ class ApplicationRuntime:
             self._end_operation()
 
     def explain(self, text: str, label: str) -> AttributionResult:
+        self._validate_text(text)
         services = self._begin_operation()
         try:
             return services.explainer.explain(text, label)
@@ -91,6 +94,7 @@ class ApplicationRuntime:
             self._end_operation()
 
     def explain_batch(self, texts: list[str], label: str) -> list[AttributionResult]:
+        self._validate_texts(texts)
         services = self._begin_operation()
         try:
             return services.explainer.explain_batch(texts, label)
@@ -116,3 +120,23 @@ class ApplicationRuntime:
         with self._condition:
             self._operation_active = False
             self._condition.notify_all() #notify_all() makes waiting callers eligible to resume
+
+    def _validate_text(self, text: str) -> None:
+        if not isinstance(text, str):
+            raise TypeError("Text must be a string")
+
+        if len(text) > self._settings.max_text_chars:
+            raise ValueError(f"Text length should be under {self._settings.max_text_chars}")
+        
+        if text.strip() == "":
+            raise ValueError("Text must contain non-whitespace characters")
+
+    def _validate_texts(self, texts: list[str]) -> None:
+        if not isinstance(texts, list):
+            raise TypeError("The input must be a list")
+        
+        if len(texts) == 0:
+            raise ValueError("Input list should not be empty")
+        
+        for text in texts:
+            self._validate_text(text)

@@ -246,3 +246,100 @@ class ApplicationRuntimeTests(TestCase):
         shutdown.result(TIMEOUT)
         self.assertFalse(self.runtime._operation_active)
         self.assertFalse(self.runtime.is_ready())
+
+
+class SingleTextValidationTests(TestCase):
+    def make_runtime(self):
+        classifier = Mock(spec=ToxicityClassifier)
+        explainer = Mock(spec=ToxicityExplainer)
+        services = ApplicationServices(classifier, explainer)
+        builder = Mock(return_value=services)
+        return ApplicationRuntime(RuntimeSettings(device="cpu"), services_builder=builder), services, builder
+
+    def test_invalid_text_does_not_leave_a_reservation_or_call_services(self):
+        invalid_inputs = ((None, TypeError), (123, TypeError), ([], TypeError),
+                          ("", ValueError), (" \t\n", ValueError))
+        for name in ("predict", "explain"):
+            for text, expected_error in invalid_inputs:
+                with self.subTest(operation=name, text=text):
+                    runtime, services, _ = self.make_runtime()
+                    runtime.start()
+                    args = (text,) if name == "predict" else (text, "toxic")
+                    with self.assertRaises(expected_error):
+                        getattr(runtime, name)(*args)
+                    services.classifier.predict.assert_not_called()
+                    services.explainer.explain.assert_not_called()
+                    # Do not call stop on a leaked reservation: it would hang.
+                    self.assertFalse(runtime._operation_active)
+
+    def test_text_validation_precedes_readiness(self):
+        for name in ("predict", "explain"):
+            for text, expected_error in ((None, TypeError), (" \t", ValueError)):
+                with self.subTest(operation=name, text=text):
+                    runtime, _, builder = self.make_runtime()
+                    args = (text,) if name == "predict" else (text, "toxic")
+                    with self.assertRaises(expected_error):
+                        getattr(runtime, name)(*args)
+                    builder.assert_not_called()
+
+    def test_valid_text_is_forwarded_without_normalization(self):
+        for name, owner in (("predict", "classifier"), ("explain", "explainer")):
+            with self.subTest(operation=name):
+                runtime, services, _ = self.make_runtime()
+                runtime.start()
+                text = "  café\nhello 🙂  "
+                args = (text,) if name == "predict" else (text, "toxic")
+                method = getattr(getattr(services, owner), name)
+                self.assertIs(getattr(runtime, name)(*args), method.return_value)
+                method.assert_called_once_with(*args)
+                self.assertFalse(runtime._operation_active)
+
+
+class BatchTextValidationTests(TestCase):
+    def make_runtime(self):
+        services = ApplicationServices(Mock(spec=ToxicityClassifier), Mock(spec=ToxicityExplainer))
+        builder = Mock(return_value=services)
+        return ApplicationRuntime(RuntimeSettings(device="cpu"), services_builder=builder), services
+
+    def test_invalid_batches_are_rejected_before_model_reservation(self):
+        cases = (
+            (None, TypeError), ("hello", TypeError), (("hello",), TypeError),
+            ([], ValueError), (["valid", None], TypeError),
+            (["valid", 123], TypeError), (["valid", ""], ValueError),
+            (["valid", " \t\n"], ValueError),
+        )
+        for name in ("predict_batch", "explain_batch"):
+            for texts, expected in cases:
+                with self.subTest(operation=name, texts=texts):
+                    runtime, services = self.make_runtime()
+                    runtime.start()
+                    # A sentinel proves validation runs before any reservation.
+                    runtime._begin_operation = Mock(side_effect=AssertionError("Reserved invalid input"))
+                    args = (texts,) if name == "predict_batch" else (texts, "toxic")
+                    with self.assertRaises(expected):
+                        getattr(runtime, name)(*args)
+                    runtime._begin_operation.assert_not_called()
+                    services.classifier.predict_batch.assert_not_called()
+                    services.explainer.explain_batch.assert_not_called()
+
+    def test_empty_batch_validation_precedes_readiness(self):
+        for name in ("predict_batch", "explain_batch"):
+            with self.subTest(operation=name):
+                runtime, _ = self.make_runtime()
+                args = ([],) if name == "predict_batch" else ([], "toxic")
+                with self.assertRaises(ValueError):
+                    getattr(runtime, name)(*args)
+
+    def test_valid_batches_preserve_order_text_and_duplicates(self):
+        for name, owner in (("predict_batch", "classifier"), ("explain_batch", "explainer")):
+            with self.subTest(operation=name):
+                runtime, services = self.make_runtime()
+                runtime.start()
+                texts = ["  café  ", "hello\n🙂", "  café  "]
+                original = texts.copy()
+                args = (texts,) if name == "predict_batch" else (texts, "toxic")
+                method = getattr(getattr(services, owner), name)
+                self.assertIs(getattr(runtime, name)(*args), method.return_value)
+                method.assert_called_once_with(*args)
+                self.assertEqual(texts, original)
+                self.assertFalse(runtime._operation_active)
