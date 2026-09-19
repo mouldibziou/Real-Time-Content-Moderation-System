@@ -2,12 +2,11 @@ from collections.abc import Callable
 from enum import Enum, auto
 from threading import Condition
 
-from prompt_toolkit import Application
-
 from app.classifier import ClassificationResult
 from app.explainer import AttributionResult
 from app.services import ApplicationServices, build_services
 from app.settings import RuntimeSettings
+from time import monotonic
 
 class RuntimeState(Enum):
     STOPPED = auto()
@@ -112,9 +111,13 @@ class ApplicationRuntime:
         return self._services
 
     def _begin_operation(self) -> ApplicationServices:
+        deadline = monotonic() + self._settings.operation_wait_timeout_seconds
         with self._condition:
             while self._operation_active and self._state is RuntimeState.READY:
-                self._condition.wait() #wait() blocks other caller(s), we treat one operation at a time
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Timed out waiting for model access")
+                self._condition.wait(timeout=remaining) # suspends the calling thread while releasing the condition lock
 
             services = self._require_services()
             self._operation_active = True

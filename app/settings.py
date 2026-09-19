@@ -17,7 +17,7 @@ class RuntimeSettings:
     are provisional limits for deployment,
     these will be tuned later after real-world measurements.
     """
-    operation_wait_timeout_seconds: float = 30.0
+    operation_wait_timeout_seconds: float = 30.0 # NOTE: operation timeout should not heavily exceed the final expected latency (p99, p95)
     max_prediction_batch_size: int = 64
     max_explanation_batch_size: int = 8
 
