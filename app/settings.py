@@ -69,13 +69,13 @@ class RuntimeSettings:
             raise ValueError("Operation wait timeout must be finite and geater than zero")
         if not isinstance(self.max_waiting_classifications, int) or type(self.max_waiting_classifications) is bool:
             raise TypeError("Maximum waiting classifications must be an integer")
-        if self.max_waiting_classifications < 0:
+        if self.max_waiting_classifications <= 0:
             raise ValueError("Maximum waiting classifications must be positive")
         if not isinstance(self.max_waiting_explanations, int) or type(self.max_waiting_explanations) is bool:
-            raise TypeError("Maximum waiting classifications must be an integer")
-        if self.max_waiting_explanations < 0:
-            raise ValueError("Maximum waiting classifications must be positive")
+            raise TypeError("Maximum waiting explanations must be an integer")
+        if self.max_waiting_explanations <= 0:
+            raise ValueError("Maximum waiting explanations must be positive")
         if not isinstance(self.classification_burst_limit, int) or type(self.classification_burst_limit) is bool:
-            raise TypeError("Maximum waiting classifications must be an integer")
-        if self.classification_burst_limit < 0:
-            raise ValueError("Maximum waiting classifications must be positive")
+            raise TypeError("Classification burst limit must be an integer")
+        if self.classification_burst_limit <= 0:
+            raise ValueError("Classification burst limit must be positive")
