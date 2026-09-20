@@ -11,6 +11,17 @@ class RuntimeSettings:
     device: str = "mps"
     n_steps: int = 32
     max_text_chars: int = 10_000
+
+    """
+    NOTE: the below values are provisional defaults, they will be altered accordingly with maximum acceptable latency.
+
+    1. How many waiting requests can you accept before latency becomes unacceptable?
+    2. How much optional explanation traffic are you willing to hold?
+    3. How long can an explanation wait during sustained classification traffic?
+    """
+    max_waiting_classifications: int = 8 # maximum number of classification calls allowed to wait in the classification queue
+    max_waiting_explanations: int = 2 # check right above
+    classification_burst_limit: int = 5 # when both queues contain work, the maximum number of consecutive classification operations served before the scheduler must serve one explanation
     """
     NOTE: operation wait timeout in seconds, 
     max prediction ,and explanation batch sizes
@@ -56,3 +67,15 @@ class RuntimeSettings:
             raise TypeError("Operation wait timeout must be a float or an integer")
         if not isfinite(self.operation_wait_timeout_seconds) or (self.operation_wait_timeout_seconds <= 0):
             raise ValueError("Operation wait timeout must be finite and geater than zero")
+        if not isinstance(self.max_waiting_classifications, int) or type(self.max_waiting_classifications) is bool:
+            raise TypeError("Maximum waiting classifications must be an integer")
+        if self.max_waiting_classifications < 0:
+            raise ValueError("Maximum waiting classifications must be positive")
+        if not isinstance(self.max_waiting_explanations, int) or type(self.max_waiting_explanations) is bool:
+            raise TypeError("Maximum waiting classifications must be an integer")
+        if self.max_waiting_explanations < 0:
+            raise ValueError("Maximum waiting classifications must be positive")
+        if not isinstance(self.classification_burst_limit, int) or type(self.classification_burst_limit) is bool:
+            raise TypeError("Maximum waiting classifications must be an integer")
+        if self.classification_burst_limit < 0:
+            raise ValueError("Maximum waiting classifications must be positive")

@@ -14,6 +14,9 @@ class RuntimeState(Enum):
     READY = auto()
     STOPPING = auto()
 
+class RuntimeBusyError(RuntimeError):
+    """Raised when the relevant waiting queue has no remaining capacity"""
+
 class ApplicationRuntime:
     def __init__(
             self,
