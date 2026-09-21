@@ -22,7 +22,7 @@ def choose_next_kind(
     """
     match (classification_waiting, explanation_waiting):
         case (False, False):
-            return
+            return None
         case (True, False):
             return OperationKind.CLASSIFICATION
         case (False, True):

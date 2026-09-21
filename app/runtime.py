@@ -6,7 +6,10 @@ from app.classifier import ClassificationResult
 from app.explainer import AttributionResult
 from app.services import ApplicationServices, build_services
 from app.settings import RuntimeSettings
+from app.scheduling import WaitingOperation, OperationKind, choose_next_kind
+
 from time import monotonic
+from collections import deque # sequence container optimized for fast appends and pops from both ends
 
 class RuntimeState(Enum):
     STOPPED = auto()
@@ -33,6 +36,10 @@ class ApplicationRuntime:
         self._condition = Condition()
         self._state = RuntimeState.STOPPED
         self._operation_active = False
+
+        self._classification_queue: deque[WaitingOperation] = deque()
+        self._explanation_queue: deque[WaitingOperation] = deque()
+        self._consecutive_classifications = 0
 
     def is_ready(self) -> bool:
         with self._condition:
@@ -164,3 +171,35 @@ class ApplicationRuntime:
         if not (label in self._settings.labels):
             raise ValueError(f"Provided explanation label {label},\
                               is not one of these labels {self._settings.labels}")
+
+    def _next_waiting_operation(self) -> WaitingOperation | None:
+        """
+        examines the queues and scheduling states, then identifies the next ticket to serve
+        callers must hold _condition when using this helper
+        """
+        if self._operation_active:
+            return None
+        next_kind = choose_next_kind(
+            classification_waiting=bool(self._classification_queue),
+            explanation_waiting=bool(self._explanation_queue),
+            consecutive_classifications=self._consecutive_classifications,
+            classification_burst_limit=self._settings.classification_burst_limit
+        )
+        if next_kind is None:
+            return None
+        else:
+            return self._queue_for(next_kind)[0]
+
+    def _queue_for(
+            self, kind: OperationKind
+    ) -> deque[WaitingOperation]:
+        """
+        maps an operation category to its queue
+        callers must hold _condition when using this helper
+        """
+        if kind == OperationKind.CLASSIFICATION:
+            return self._classification_queue
+        elif kind == OperationKind.EXPLANATION:
+            return self._explanation_queue
+        else:
+            raise ValueError(f"Operation kind is not Classification or Explanation")
