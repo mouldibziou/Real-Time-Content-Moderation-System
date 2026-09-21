@@ -35,10 +35,12 @@ class ReservationTimeoutTests(TestCase):
                 self.runtime._operation_active = True
                 with patch('app.runtime.monotonic', side_effect=[100, 100, 103, 110]), \
                         patch.object(self.runtime._condition, 'wait') as wait:
-                    with self.assertRaisesRegex(TimeoutError, 'waiting for model access'):
+                    with self.assertRaises(TimeoutError):
                         getattr(self.runtime, name)(*args)
                 self.assertEqual(wait.call_args_list, [call(timeout=10), call(timeout=7)])
                 self.assertTrue(self.runtime._operation_active)
+                self.assertFalse(self.runtime._classification_queue)
+                self.assertFalse(self.runtime._explanation_queue)
                 self.assertTrue(self.runtime.is_ready())
                 self.assertEqual(self.services.classifier.mock_calls, [])
                 self.assertEqual(self.services.explainer.mock_calls, [])
@@ -61,7 +63,7 @@ class ReservationTimeoutTests(TestCase):
         def release_reservation(*, timeout):
             self.runtime._operation_active = False
 
-        with patch('app.runtime.monotonic', side_effect=[100, 102]), \
+        with patch('app.runtime.monotonic', side_effect=[100, 102, 103, 103]), \
                 patch.object(self.runtime._condition, 'wait', side_effect=release_reservation) as wait:
             result = self.runtime.predict('hello')
         wait.assert_called_once_with(timeout=8)

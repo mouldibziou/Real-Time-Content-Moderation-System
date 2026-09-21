@@ -73,14 +73,19 @@ class ApplicationRuntime:
                 raise RuntimeError(f"Application runtime is already {self._state.name}")
             self._state = RuntimeState.STOPPING
             self._condition.notify_all()
-            while self._operation_active:
+            while (
+                self._operation_active
+                or self._classification_queue
+                or self._explanation_queue
+            ):
                 self._condition.wait()
             self._services = None
+            self._consecutive_classifications = 0
             self._state = RuntimeState.STOPPED
 
     def predict(self, text: str) -> ClassificationResult:
         self._validate_text(text)
-        services = self._begin_operation()
+        services = self._begin_operation(OperationKind.CLASSIFICATION)
         try:
             return services.classifier.predict(text)
         finally:
@@ -89,7 +94,7 @@ class ApplicationRuntime:
     def predict_batch(self, texts: list[str]) -> list[ClassificationResult]:
         self._validate_texts(texts, 
                              max_batch_size=self._settings.max_prediction_batch_size)
-        services = self._begin_operation()
+        services = self._begin_operation(OperationKind.CLASSIFICATION)
         try:
             return services.classifier.predict_batch(texts)
         finally:
@@ -98,7 +103,7 @@ class ApplicationRuntime:
     def explain(self, text: str, label: str) -> AttributionResult:
         self._validate_text(text)
         self._validate_label(label)
-        services = self._begin_operation()
+        services = self._begin_operation(OperationKind.EXPLANATION)
         try:
             return services.explainer.explain(text, label)
         finally:
@@ -108,7 +113,7 @@ class ApplicationRuntime:
         self._validate_texts(texts, 
                              max_batch_size=self._settings.max_explanation_batch_size)
         self._validate_label(label)
-        services = self._begin_operation()
+        services = self._begin_operation(OperationKind.EXPLANATION)
         try:
             return services.explainer.explain_batch(texts, label)
         finally:
@@ -120,22 +125,33 @@ class ApplicationRuntime:
 
         return self._services
 
-    def _begin_operation(self) -> ApplicationServices:
+    def _begin_operation(self, kind: OperationKind) -> ApplicationServices:
         deadline = monotonic() + self._settings.operation_wait_timeout_seconds
         with self._condition:
-            while self._operation_active and self._state is RuntimeState.READY:
-                remaining = deadline - monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("Timed out waiting for model access")
-                self._condition.wait(timeout=remaining) # suspends the calling thread while releasing the condition lock
-
-            services = self._require_services()
-            self._operation_active = True
-            return services
+            queue = self._queue_for(kind)
+            ticket = self._enqueue_operation(kind=kind, deadline=deadline)
+            try:
+                while True:
+                    self._require_services()  # Reject calls when shutdown begins.
+                    remaining = ticket.deadline - monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("Ticket expired")
+                    if self._next_waiting_operation() is ticket:
+                        return self._claim_operation(ticket)
+                    else:
+                        self._condition.wait(timeout=remaining)
+            finally:
+                if ticket in queue:
+                    queue.remove(ticket)
+                if self._operation_active == False and bool(self._classification_queue) is False and bool(self._explanation_queue) is False:
+                    self._consecutive_classifications = 0
+                self._condition.notify_all()
 
     def _end_operation(self) -> None:
         with self._condition:
             self._operation_active = False
+            if bool(self._classification_queue) is False and bool(self._explanation_queue) is False:
+                self._consecutive_classifications = 0
             self._condition.notify_all() #notify_all() makes waiting callers eligible to resume
 
     def _validate_text(self, text: str, idx: int = -1) -> None:
@@ -203,3 +219,49 @@ class ApplicationRuntime:
             return self._explanation_queue
         else:
             raise ValueError(f"Operation kind is not Classification or Explanation")
+
+    def _enqueue_operation(
+            self,
+            kind: OperationKind,
+            *,
+            deadline: float,
+    ) -> WaitingOperation:
+        """
+        checks readiness and capacity, then registers a ticket, and returns it to its caller
+        callers must hold _condition when using this helper
+        """
+        self._require_services()
+        queue = self._queue_for(kind)
+        capacity = (self._settings.max_waiting_classifications if kind == OperationKind.CLASSIFICATION else self._settings.max_waiting_explanations)
+        if len(queue) >= capacity:
+            raise RuntimeBusyError(f"{kind} capacity is at its maximum: {capacity}")
+        ticket = WaitingOperation(kind=kind, deadline=deadline)
+        queue.append(ticket)
+        self._condition.notify_all()
+        return ticket
+
+    def _claim_operation(
+            self,
+            ticket: WaitingOperation,
+    ) -> ApplicationServices:
+        """Reserve the model for the selected, unexpired ticket.
+
+        The caller must hold _condition. Rejected tickets remain queued;
+        the admission/waiting caller is responsible for their cleanup.
+        """
+        services = self._require_services()
+        if monotonic() >= ticket.deadline:
+            raise TimeoutError("Timed out waiting for model access")
+        if self._next_waiting_operation() is not ticket:
+            raise RuntimeError("This ticket is not next for model access")
+
+        self._queue_for(ticket.kind).popleft()
+        self._operation_active = True
+        if ticket.kind is OperationKind.CLASSIFICATION:
+            self._consecutive_classifications = min(
+                self._consecutive_classifications + 1,
+                self._settings.classification_burst_limit,
+            )
+        else:
+            self._consecutive_classifications = 0
+        return services
