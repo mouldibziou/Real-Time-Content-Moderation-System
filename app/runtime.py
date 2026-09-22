@@ -18,8 +18,8 @@ class RuntimeState(Enum):
     READY = auto()
     STOPPING = auto()
 
-@dataclass
-class RuntimeStatus(frozen=True):
+@dataclass(frozen=True)
+class RuntimeStatus():
     state: RuntimeState
     operation_active: bool
     waiting_classifications: int
