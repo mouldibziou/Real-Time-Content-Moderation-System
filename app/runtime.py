@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from enum import Enum, auto
 from threading import Condition
+from dataclasses import dataclass
 
 from app.classifier import ClassificationResult
 from app.explainer import AttributionResult
@@ -16,6 +17,15 @@ class RuntimeState(Enum):
     STARTING = auto()
     READY = auto()
     STOPPING = auto()
+
+@dataclass
+class RuntimeStatus(frozen=True):
+    state: RuntimeState
+    operation_active: bool
+    waiting_classifications: int
+    waiting_explanations: int
+    classification_queue_capacity: int
+    explanation_queue_capacity: int
 
 class RuntimeBusyError(RuntimeError):
     """Raised when the relevant waiting queue has no remaining capacity"""
@@ -40,6 +50,28 @@ class ApplicationRuntime:
         self._classification_queue: deque[WaitingOperation] = deque()
         self._explanation_queue: deque[WaitingOperation] = deque()
         self._consecutive_classifications = 0
+
+    def status(self) -> RuntimeStatus:
+        """
+        returns the runtime status
+        status must work while stopped, starting, ready, or stopping
+        """
+        with self._condition:
+            state = self._state
+            operation_active = self._operation_active
+            waiting_classifications = len(self._classification_queue)
+            waiting_explanations = len(self._explanation_queue)
+            classification_queue_capacity = self._settings.max_waiting_classifications
+            explanation_queue_capacity = self._settings.max_waiting_explanations
+
+            return RuntimeStatus(
+                state=state,
+                operation_active=operation_active,
+                waiting_classifications=waiting_classifications,
+                waiting_explanations=waiting_explanations,
+                classification_queue_capacity=classification_queue_capacity,
+                explanation_queue_capacity=explanation_queue_capacity
+            )
 
     def is_ready(self) -> bool:
         with self._condition:
