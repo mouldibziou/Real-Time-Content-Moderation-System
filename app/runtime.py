@@ -10,6 +10,11 @@ from app.services import ApplicationServices, build_services
 from app.settings import RuntimeSettings
 from app.scheduling import WaitingOperation, OperationKind, choose_next_kind
 from app.metadata import ModelInfo
+from app.errors import (
+    RuntimeBusyError,
+    RuntimeNotReadyError,
+    OperationWaitTimeoutError
+)
 
 from time import monotonic
 from collections import deque # sequence container optimized for fast appends and pops from both ends
@@ -166,7 +171,7 @@ class ApplicationRuntime:
         
     def _require_services(self) -> ApplicationServices:
         if self._services is None or self._state is not RuntimeState.READY:
-            raise RuntimeError("Application runtime is not ready")
+            raise RuntimeNotReadyError("Application runtime is not ready")
 
         return self._services
 
@@ -180,7 +185,7 @@ class ApplicationRuntime:
                     self._require_services()  # Reject calls when shutdown begins.
                     remaining = ticket.deadline - monotonic()
                     if remaining <= 0:
-                        raise TimeoutError("Ticket expired")
+                        raise OperationWaitTimeoutError("Ticket expired")
                     if self._next_waiting_operation() is ticket:
                         return self._claim_operation(ticket)
                     else:
@@ -296,7 +301,7 @@ class ApplicationRuntime:
         """
         services = self._require_services()
         if monotonic() >= ticket.deadline:
-            raise TimeoutError("Timed out waiting for model access")
+            raise OperationWaitTimeoutError("Timed out waiting for model access")
         if self._next_waiting_operation() is not ticket:
             raise RuntimeError("This ticket is not next for model access")
 
