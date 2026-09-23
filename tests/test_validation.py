@@ -4,6 +4,7 @@ from unittest.mock import Mock
 
 from app.classifier import ToxicityClassifier
 from app.explainer import ToxicityExplainer
+from tests.factories import make_model_info
 from app.runtime import ApplicationRuntime
 from app.services import ApplicationServices
 from app.settings import RuntimeSettings
@@ -39,7 +40,7 @@ class RuntimeLimitAndLabelTests(TestCase):
             device="cpu", max_text_chars=5,
             max_prediction_batch_size=3, max_explanation_batch_size=2,
         )
-        self.services = ApplicationServices(Mock(spec=ToxicityClassifier), Mock(spec=ToxicityExplainer))
+        self.services = ApplicationServices(Mock(spec=ToxicityClassifier), Mock(spec=ToxicityExplainer), model_info=make_model_info())
         self.runtime = ApplicationRuntime(self.settings, services_builder=Mock(return_value=self.services))
         self.runtime.start()
         # Keep the real reservation behavior, while checking invalid inputs never reach it.

@@ -5,6 +5,7 @@ from threading import Event, Thread
 from unittest import TestCase
 from unittest.mock import Mock
 
+from tests.factories import make_model_info
 from app.runtime import ApplicationRuntime, RuntimeState
 from app.scheduling import OperationKind, WaitingOperation
 from app.services import ApplicationServices
@@ -13,7 +14,7 @@ from app.settings import RuntimeSettings
 
 class RuntimeStatusTests(TestCase):
     def setUp(self):
-        self.services = ApplicationServices(Mock(), Mock())
+        self.services = ApplicationServices(Mock(), Mock(), model_info=make_model_info())
         self.builder = Mock(return_value=self.services)
         self.runtime = ApplicationRuntime(
             RuntimeSettings(device="cpu", max_waiting_classifications=3, max_waiting_explanations=2),

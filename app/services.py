@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from app.classifier import ToxicityClassifier
 from app.explainer import ToxicityExplainer
+from app.metadata import ModelInfo
 from app.resources import load_resources
 from app.settings import RuntimeSettings
 
@@ -9,6 +10,7 @@ from app.settings import RuntimeSettings
 class ApplicationServices:
     classifier: ToxicityClassifier
     explainer: ToxicityExplainer
+    model_info: ModelInfo
 
 def build_services(settings: RuntimeSettings) -> ApplicationServices:
     """
@@ -43,7 +45,17 @@ def build_services(settings: RuntimeSettings) -> ApplicationServices:
         n_steps=n_steps
     )
 
+    model_info = ModelInfo(
+        model_type=model.config.model_type,
+        device=str(device),
+        labels=settings.labels,
+        thresholds=settings.thresholds,
+        max_length=settings.max_length,
+        explanation_steps=settings.n_steps
+        )
+
     return ApplicationServices(
         classifier=classifier,
         explainer=explainer,
+        model_info=model_info
     )

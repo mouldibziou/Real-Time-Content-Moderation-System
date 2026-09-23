@@ -6,6 +6,7 @@ from unittest.mock import Mock, call, patch
 
 from app.classifier import ToxicityClassifier
 from app.explainer import ToxicityExplainer
+from tests.factories import make_model_info
 from app.runtime import ApplicationRuntime, RuntimeState
 from app.services import ApplicationServices
 from app.settings import RuntimeSettings
@@ -14,7 +15,7 @@ from app.settings import RuntimeSettings
 class ReservationTimeoutTests(TestCase):
     def setUp(self):
         self.settings = RuntimeSettings(device="cpu", operation_wait_timeout_seconds=10)
-        self.services = ApplicationServices(Mock(spec=ToxicityClassifier), Mock(spec=ToxicityExplainer))
+        self.services = ApplicationServices(Mock(spec=ToxicityClassifier), Mock(spec=ToxicityExplainer), model_info=make_model_info())
         self.runtime = ApplicationRuntime(self.settings, services_builder=Mock(return_value=self.services))
         self.runtime.start()
 

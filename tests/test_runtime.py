@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 from app.classifier import ClassificationResult, ToxicityClassifier
 from app.explainer import AttributionResult, ToxicityExplainer
+from tests.factories import make_model_info
 from app.runtime import ApplicationRuntime, RuntimeState
 from app.services import ApplicationServices
 from app.settings import RuntimeSettings
@@ -43,7 +44,7 @@ class ApplicationRuntimeTests(TestCase):
         self.classifier.predict_batch.return_value = [ClassificationResult(labels={})]
         self.explainer.explain.return_value = AttributionResult(label="toxic", spans=())
         self.explainer.explain_batch.return_value = [AttributionResult(label="toxic", spans=())]
-        self.services = ApplicationServices(self.classifier, self.explainer)
+        self.services = ApplicationServices(self.classifier, self.explainer, model_info=make_model_info())
         self.builder = Mock(return_value=self.services)
         self.runtime = ApplicationRuntime(self.settings, services_builder=self.builder)
         self.condition = ObservedCondition()
@@ -155,7 +156,7 @@ class ApplicationRuntimeTests(TestCase):
         self.runtime.stop()
         self.assertFalse(self.runtime.is_ready())
         self.assertIsNone(self.runtime._services)
-        replacement = ApplicationServices(Mock(spec=ToxicityClassifier), Mock(spec=ToxicityExplainer))
+        replacement = ApplicationServices(Mock(spec=ToxicityClassifier), Mock(spec=ToxicityExplainer), model_info=make_model_info())
         self.builder.return_value = replacement
         self.runtime.start()
         self.assertIs(self.runtime.predict("hello"), replacement.classifier.predict.return_value)
@@ -252,7 +253,7 @@ class SingleTextValidationTests(TestCase):
     def make_runtime(self):
         classifier = Mock(spec=ToxicityClassifier)
         explainer = Mock(spec=ToxicityExplainer)
-        services = ApplicationServices(classifier, explainer)
+        services = ApplicationServices(classifier, explainer, model_info=make_model_info())
         builder = Mock(return_value=services)
         return ApplicationRuntime(RuntimeSettings(device="cpu", max_prediction_batch_size=4, max_explanation_batch_size=4), services_builder=builder), services, builder
 
@@ -297,7 +298,7 @@ class SingleTextValidationTests(TestCase):
 
 class BatchTextValidationTests(TestCase):
     def make_runtime(self):
-        services = ApplicationServices(Mock(spec=ToxicityClassifier), Mock(spec=ToxicityExplainer))
+        services = ApplicationServices(Mock(spec=ToxicityClassifier), Mock(spec=ToxicityExplainer), model_info=make_model_info())
         builder = Mock(return_value=services)
         return ApplicationRuntime(RuntimeSettings(device="cpu", max_prediction_batch_size=4, max_explanation_batch_size=4), services_builder=builder), services
 

@@ -2,6 +2,7 @@
 from unittest import TestCase
 from unittest.mock import Mock
 
+from tests.factories import make_model_info
 from app.runtime import ApplicationRuntime
 from app.scheduling import OperationKind, WaitingOperation
 from app.settings import RuntimeSettings
@@ -73,7 +74,7 @@ class RuntimeAdmissionAndClaimTests(TestCase):
         from app.services import ApplicationServices
         from unittest.mock import patch
 
-        self.services = ApplicationServices(Mock(), Mock())
+        self.services = ApplicationServices(Mock(), Mock(), model_info=make_model_info())
         self.runtime = ApplicationRuntime(
             RuntimeSettings(device="cpu", classification_burst_limit=2,
                             max_waiting_classifications=2, max_waiting_explanations=1),

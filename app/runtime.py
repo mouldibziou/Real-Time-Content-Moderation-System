@@ -8,6 +8,7 @@ from app.explainer import AttributionResult
 from app.services import ApplicationServices, build_services
 from app.settings import RuntimeSettings
 from app.scheduling import WaitingOperation, OperationKind, choose_next_kind
+from app.metadata import ModelInfo
 
 from time import monotonic
 from collections import deque # sequence container optimized for fast appends and pops from both ends
@@ -19,7 +20,7 @@ class RuntimeState(Enum):
     STOPPING = auto()
 
 @dataclass(frozen=True)
-class RuntimeStatus():
+class RuntimeStatus:
     state: RuntimeState
     operation_active: bool
     waiting_classifications: int
@@ -72,6 +73,11 @@ class ApplicationRuntime:
                 classification_queue_capacity=classification_queue_capacity,
                 explanation_queue_capacity=explanation_queue_capacity
             )
+
+    def model_info(self) -> ModelInfo:
+        with self._condition:
+            services = self._require_services()
+            return services.model_info
 
     def is_ready(self) -> bool:
         with self._condition:

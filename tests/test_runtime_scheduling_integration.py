@@ -2,6 +2,7 @@
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
+from tests.factories import make_model_info
 from app.runtime import ApplicationRuntime, RuntimeBusyError, RuntimeState
 from app.scheduling import OperationKind, WaitingOperation
 from app.services import ApplicationServices
@@ -10,7 +11,7 @@ from app.settings import RuntimeSettings
 
 class TicketIntegrationTests(TestCase):
     def setUp(self):
-        self.services = ApplicationServices(Mock(), Mock())
+        self.services = ApplicationServices(Mock(), Mock(), model_info=make_model_info())
         self.runtime = ApplicationRuntime(
             RuntimeSettings(device="cpu", max_waiting_classifications=2,
                             max_waiting_explanations=1, classification_burst_limit=2),
@@ -112,7 +113,7 @@ class ThreadedSchedulingOrderTests(TestCase):
         runtime = ApplicationRuntime(
             RuntimeSettings(device='cpu', classification_burst_limit=2,
                             max_waiting_classifications=3, max_waiting_explanations=2),
-            services_builder=Mock(return_value=ApplicationServices(classifier, explainer)),
+            services_builder=Mock(return_value=ApplicationServices(classifier, explainer, model_info=make_model_info())),
         )
         runtime.start()
         threads, futures = [], []
