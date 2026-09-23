@@ -2,6 +2,7 @@ from collections.abc import Callable
 from enum import Enum, auto
 from threading import Condition
 from dataclasses import dataclass
+import logging
 
 from app.classifier import ClassificationResult
 from app.explainer import AttributionResult
@@ -12,6 +13,8 @@ from app.metadata import ModelInfo
 
 from time import monotonic
 from collections import deque # sequence container optimized for fast appends and pops from both ends
+
+logger = logging.getLogger(__name__)
 
 class RuntimeState(Enum):
     STOPPED = auto()
@@ -90,17 +93,20 @@ class ApplicationRuntime:
             if self._state is not RuntimeState.STOPPED:
                 raise RuntimeError("Startup cannot begin in the current state")
             self._state = RuntimeState.STARTING
+        logger.info("Runtime startup started") # logging outsite the lock to not keep blocking other threads, as logging I/O operations might take too long.
             
         try:
             services = self._services_builder(self._settings)
         except Exception:
             with self._condition:
                 self._state = RuntimeState.STOPPED
-            raise
+            logger.exception("Runtime startup failed")
+            raise 
         else:
             with self._condition:
                 self._services = services
                 self._state = RuntimeState.READY
+            logger.info("Runtime startup completed")
 
     def stop(self) -> None:
         with self._condition:
@@ -120,6 +126,7 @@ class ApplicationRuntime:
             self._services = None
             self._consecutive_classifications = 0
             self._state = RuntimeState.STOPPED
+        logger.info("Runtime shutdown completed")
 
     def predict(self, text: str) -> ClassificationResult:
         self._validate_text(text)
