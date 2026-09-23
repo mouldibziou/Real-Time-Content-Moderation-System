@@ -7,6 +7,7 @@ from unittest.mock import Mock, call, patch
 from app.classifier import ToxicityClassifier
 from app.explainer import ToxicityExplainer
 from tests.factories import make_model_info
+from app.errors import OperationWaitTimeoutError, RuntimeNotReadyError
 from app.runtime import ApplicationRuntime, RuntimeState
 from app.services import ApplicationServices
 from app.settings import RuntimeSettings
@@ -36,7 +37,7 @@ class ReservationTimeoutTests(TestCase):
                 self.runtime._operation_active = True
                 with patch('app.runtime.monotonic', side_effect=[100, 100, 103, 110]), \
                         patch.object(self.runtime._condition, 'wait') as wait:
-                    with self.assertRaises(TimeoutError):
+                    with self.assertRaisesRegex(OperationWaitTimeoutError, "Timed out waiting for model access"):
                         getattr(self.runtime, name)(*args)
                 self.assertEqual(wait.call_args_list, [call(timeout=10), call(timeout=7)])
                 self.assertTrue(self.runtime._operation_active)
@@ -53,7 +54,7 @@ class ReservationTimeoutTests(TestCase):
         self.runtime._operation_active = True
         with patch('app.runtime.monotonic', side_effect=[100, 111]), \
                 patch.object(self.runtime._condition, 'wait') as wait:
-            with self.assertRaises(TimeoutError):
+            with self.assertRaisesRegex(OperationWaitTimeoutError, "Timed out waiting for model access"):
                 self.runtime.predict('hello')
         wait.assert_not_called()
         self.assertTrue(self.runtime._operation_active)
@@ -79,7 +80,7 @@ class ReservationTimeoutTests(TestCase):
 
         with patch('app.runtime.monotonic', side_effect=[100, 100]), \
                 patch.object(self.runtime._condition, 'wait', side_effect=begin_shutdown):
-            with self.assertRaisesRegex(RuntimeError, 'not ready'):
+            with self.assertRaisesRegex(RuntimeNotReadyError, 'not ready'):
                 self.runtime.predict('hello')
         self.services.classifier.predict.assert_not_called()
         self.assertTrue(self.runtime._operation_active)

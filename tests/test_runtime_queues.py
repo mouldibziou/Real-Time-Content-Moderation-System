@@ -3,6 +3,7 @@ from unittest import TestCase
 from unittest.mock import Mock
 
 from tests.factories import make_model_info
+from app.errors import OperationWaitTimeoutError, RuntimeNotReadyError
 from app.runtime import ApplicationRuntime
 from app.scheduling import OperationKind, WaitingOperation
 from app.settings import RuntimeSettings
@@ -110,7 +111,7 @@ class RuntimeAdmissionAndClaimTests(TestCase):
             self.assertEqual(notify.call_count, 2)
 
     def test_queue_capacities_are_independent_and_full_rejection_is_atomic(self):
-        from app.runtime import RuntimeBusyError
+        from app.errors import RuntimeBusyError
 
         with self.runtime._condition:
             self.enqueue(OperationKind.CLASSIFICATION)
@@ -135,7 +136,7 @@ class RuntimeAdmissionAndClaimTests(TestCase):
                 with self.subTest(state=state):
                     self.runtime._state = state
                     before = self.snapshot()
-                    with self.assertRaisesRegex(RuntimeError, "not ready"):
+                    with self.assertRaisesRegex(RuntimeNotReadyError, "not ready"):
                         self.enqueue(OperationKind.CLASSIFICATION)
                     self.assertEqual(self.snapshot(), before)
 
@@ -173,7 +174,7 @@ class RuntimeAdmissionAndClaimTests(TestCase):
                 self.runtime._classification_queue.clear()
                 ticket = self.enqueue(OperationKind.CLASSIFICATION, deadline=deadline)
                 before = self.snapshot()
-                with self.assertRaises(TimeoutError):
+                with self.assertRaisesRegex(OperationWaitTimeoutError, "Timed out waiting for model access"):
                     self.runtime._claim_operation(ticket)
                 self.assertEqual(self.snapshot(), before)
 
@@ -206,6 +207,6 @@ class RuntimeAdmissionAndClaimTests(TestCase):
             ticket = self.enqueue(OperationKind.CLASSIFICATION)
             self.runtime._state = RuntimeState.STOPPING
             before = self.snapshot()
-            with self.assertRaisesRegex(RuntimeError, "not ready"):
+            with self.assertRaisesRegex(RuntimeNotReadyError, "not ready"):
                 self.runtime._claim_operation(ticket)
             self.assertEqual(self.snapshot(), before)

@@ -1,8 +1,12 @@
 from dataclasses import dataclass
+from time import monotonic
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerFast
 import torch
+import logging
 
 from app.settings import RuntimeSettings
+
+logger = logging.getLogger(__name__)
 
 """
 NOTE: I used a fast tokenizer as the base class for tokenizers.
@@ -14,6 +18,9 @@ class ModelResources:
     device: torch.device
 
 def load_resources(settings: RuntimeSettings) -> ModelResources:
+    loading_started = monotonic()
+    logger.info("Model loading started")
+
     if not settings.model_dir.is_dir():
         raise FileNotFoundError(
             f"Model directory does not exist or is not a directory: {settings.model_dir}"
@@ -58,6 +65,13 @@ def load_resources(settings: RuntimeSettings) -> ModelResources:
 
     model.to(device)
     model.eval()
+
+    elapsed_seconds = monotonic() - loading_started
+    logger.info(
+        "Model loading completed device=%s duration_seconds=%.3f",
+        device,
+        elapsed_seconds,
+    )
 
     return ModelResources(
         model=model,

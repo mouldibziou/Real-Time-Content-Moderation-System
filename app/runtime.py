@@ -36,9 +36,6 @@ class RuntimeStatus:
     classification_queue_capacity: int
     explanation_queue_capacity: int
 
-class RuntimeBusyError(RuntimeError):
-    """Raised when the relevant waiting queue has no remaining capacity"""
-
 class ApplicationRuntime:
     def __init__(
             self,
@@ -185,7 +182,7 @@ class ApplicationRuntime:
                     self._require_services()  # Reject calls when shutdown begins.
                     remaining = ticket.deadline - monotonic()
                     if remaining <= 0:
-                        raise OperationWaitTimeoutError("Ticket expired")
+                        raise OperationWaitTimeoutError("Timed out waiting for model access")
                     if self._next_waiting_operation() is ticket:
                         return self._claim_operation(ticket)
                     else:

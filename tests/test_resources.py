@@ -1,9 +1,52 @@
 from unittest import TestCase
 from unittest.mock import patch
+from unittest.mock import Mock
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import torch
 
-from app.resources import resolve_device
+from app.resources import resolve_device, load_resources
+from app.settings import RuntimeSettings
+
+
+class ResourceLoadingLoggingTests(TestCase):
+    def setUp(self):
+        directory = self.enterContext(TemporaryDirectory())
+        self.settings = RuntimeSettings(model_dir=Path(directory), device="cpu")
+        self.tokenizer = Mock(is_fast=True, pad_token_id=0)
+        self.model = Mock()
+        self.model.config.num_labels = len(self.settings.labels)
+        self.model.config.max_position_embeddings = 512
+        self.model.config.id2label = dict(enumerate(self.settings.labels))
+        self.enterContext(patch('app.resources.AutoTokenizer.from_pretrained', return_value=self.tokenizer))
+        self.loader = self.enterContext(patch(
+            'app.resources.AutoModelForSequenceClassification.from_pretrained', return_value=self.model))
+
+    def test_success_logs_elapsed_time_and_returns_loaded_resources(self):
+        with patch('app.resources.monotonic', side_effect=[100.0, 102.5]), \
+                self.assertLogs('app.resources', level='INFO') as captured:
+            resources = load_resources(self.settings)
+        self.assertIs(resources.model, self.model)
+        self.assertIs(resources.tokenizer, self.tokenizer)
+        self.model.to.assert_called_once_with(torch.device('cpu'))
+        self.model.eval.assert_called_once_with()
+        self.assertEqual([record.getMessage() for record in captured.records], [
+            'Model loading started',
+            'Model loading completed device=cpu duration_seconds=2.500',
+        ])
+        self.assertTrue(all(record.levelname == 'INFO' for record in captured.records))
+
+    def test_loading_failure_propagates_without_completion_or_duplicate_traceback(self):
+        error = OSError('Test artifact could not be loaded')
+        self.loader.side_effect = error
+        with self.assertLogs('app.resources', level='INFO') as captured:
+            with self.assertRaises(OSError) as raised:
+                load_resources(self.settings)
+        self.assertIs(raised.exception, error)
+        self.assertEqual([record.getMessage() for record in captured.records], ['Model loading started'])
+        self.assertIsNone(captured.records[0].exc_info)
+        self.model.eval.assert_not_called()
 
 
 class ResolveDeviceTests(TestCase):
