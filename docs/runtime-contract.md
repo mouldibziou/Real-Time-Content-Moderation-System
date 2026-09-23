@@ -100,3 +100,7 @@ Current logging records startup started/completed, startup failure with its trac
 Service logging is deferred. The future HTTP layer will own request outcomes, request IDs, total request durations, and unexpected request-failure tracebacks. Each failure should have one traceback owner. The application entry point will configure logging centrally, with module loggers identifying each layer.
 
 Metrics are deferred until after the API layer. Queue capacities, batch limits, burst limits, and admission timeout are provisional and require workload measurements. This runtime contract does not establish a 50-requests-per-second capacity guarantee.
+
+## Model release evidence
+
+See [Model identity and threshold provenance](model-provenance.md) for the current artifact fingerprints, threshold sources, and remaining reproducibility gaps.
