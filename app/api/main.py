@@ -8,7 +8,6 @@ from app.runtime import ApplicationRuntime
 from app.services import ApplicationServices, build_services
 from app.settings import RuntimeSettings
 
-
 def create_app(
         settings: RuntimeSettings,
         *,
