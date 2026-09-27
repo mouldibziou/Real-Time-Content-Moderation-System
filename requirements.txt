@@ -7,3 +7,4 @@ sklearn
 datasets
 accelerate
 captum
+fastapi[standard]
