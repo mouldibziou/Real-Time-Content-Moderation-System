@@ -5,6 +5,13 @@ from app.runtime import ApplicationRuntime
 from app.errors import RuntimeNotReadyError
 from functools import partial
 
+"""
+For learning purposes:
+
+we use the dependencies because they attached to the FastAPI application state,
+and do no exist as random variables.
+"""
+
 def get_runtime(request: Request) -> ApplicationRuntime:
     # Lifespan publishes runtime to app.state only after start() succeeds.
     # If tests skip lifespan, startup failed, or a request races startup,
