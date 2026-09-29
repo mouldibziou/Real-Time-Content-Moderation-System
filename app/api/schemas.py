@@ -87,3 +87,23 @@ class ExplainBatchResponse(BaseModel):
     model_config = {"extra": "forbid"}
 
     results: list[ExplainResponse]
+
+class StatusResponse(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    state: Literal["stopped", "starting", "ready", "stopping"]
+    operation_active: bool
+    waiting_classifications: int = Field(ge=0)
+    waiting_explanations: int = Field(ge=0)
+    classification_queue_capacity: int = Field(ge=1)
+    explanation_queue_capacity: int = Field(ge=1)
+
+class ModelInfoResponse(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    model_type: str
+    device: str
+    labels: list[str]
+    thresholds: list[float]
+    max_length: int = Field(ge=1)
+    explanation_steps: int = Field(ge=1)
