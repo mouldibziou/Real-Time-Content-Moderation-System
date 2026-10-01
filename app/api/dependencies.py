@@ -32,13 +32,25 @@ def get_executor(request: Request) -> ThreadPoolExecutor:
     return executor
 
 async def _call_runtime(
-        func, 
-        executor: ThreadPoolExecutor, 
+        func,
+        executor: ThreadPoolExecutor,
         *args,
         **kwargs
         ):
     """
-    helper to call runtime functions asynchronously
+    Non-blocking bridge between FastAPI's event loop and sync model code.
+
+    runtime.predict/explain are sync and heavy (seconds on torch). Calling
+    them directly on the event loop would freeze it: no healthchecks, no
+    status, no other requests until they return.
+
+    This helper hands the blocking call to the dedicated single-worker pool
+    via loop.run_in_executor and awaits the future. Awaiting suspends only
+    this request's coroutine and gives the loop back, so fast paths stay
+    responsive while the pool thread runs inference.
+
+    Sync model code stays sync for torch/GIL simplicity; this async wrapper
+    preserves server concurrency.
     """
     bound_func = partial(func, *args, **kwargs)
     loop = asyncio.get_running_loop()

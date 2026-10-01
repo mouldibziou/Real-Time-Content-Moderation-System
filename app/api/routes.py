@@ -2,13 +2,16 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated
 from fastapi import APIRouter
 from fastapi.params import Depends
-from matplotlib.text import Annotation
 
 from app.api.schemas import(
     BatchClassifyRequest,
+    BatchExplainRequest,
     ClassifyBatchResponse,
     ClassifyRequest,
     ClassifyResponse,
+    ExplainBatchResponse,
+    ExplainRequest,
+    ExplainResponse,
     ModelInfoResponse,
     ReadinessResponse,
     StatusResponse
@@ -83,6 +86,40 @@ async def classify_batch(
     return {
         "results": [
             {"text": text, "labels": r.labels}
+            for text, r in zip(texts, results)
+        ]
+    }
+
+@router.post("/explain", response_model=ExplainResponse)
+async def explain_text(
+    runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
+    executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
+    payload: ExplainRequest
+):
+    text = payload.text
+    label = payload.label
+
+    result = await _call_runtime(runtime.explain, executor, text, label)
+    return {
+        "text": text,
+        "label": result.label,
+        "spans": list(result.spans),
+        "convergence_delta": result.convergence_delta
+    }
+
+@router.post("/explain_batch", response_model=ExplainBatchResponse)
+async def explain_batch(
+    runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
+    executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
+    payload: BatchExplainRequest
+):
+    texts = payload.texts
+    label = payload.label
+
+    results = await _call_runtime(runtime.explain_batch, executor, texts, label)
+    return {
+        "results": [
+            {"text": text, "label": r.label, "spans": list(r.spans), "convergence_delta": r.convergence_delta}
             for text, r in zip(texts, results)
         ]
     }
