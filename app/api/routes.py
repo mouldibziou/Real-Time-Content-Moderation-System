@@ -44,7 +44,7 @@ async def get_runtime_status(
     status = runtime.status()
     return _status_to_list(status)
 
-@router.get("/ready", response_model=ReadinessResponse)
+@router.get("/health/ready", response_model=ReadinessResponse)
 async def get_readiness(
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
 ):
@@ -55,8 +55,8 @@ async def get_readiness(
     is_ready = runtime.is_ready()
     return {"is_ready": is_ready}
 
-@router.get("/health")
-async def health_check():
+@router.get("/health/live")
+async def health_check() -> dict[str, str]:
     return {"status": "healthy"}
 
 # NOTE: we await _call_runtime because it is an async function as it 

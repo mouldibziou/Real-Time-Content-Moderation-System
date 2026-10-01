@@ -19,6 +19,10 @@ from app.errors import (
 from time import monotonic
 from collections import deque # sequence container optimized for fast appends and pops from both ends
 
+
+"""
+NOTE: the logger is unfinished here, finish it
+"""
 logger = logging.getLogger(__name__)
 
 class RuntimeState(Enum):

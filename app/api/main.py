@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from app.runtime import ApplicationRuntime
 from app.services import ApplicationServices, build_services
 from app.settings import RuntimeSettings
+from app.api.routes import router
 
 def create_app(
         settings: RuntimeSettings,
@@ -44,4 +45,14 @@ def create_app(
         lifespan=lifespan
     )
 
+    app.include_router(
+        router
+    )
+
     return app
+
+settings = RuntimeSettings()
+
+# main:app (module-level function) is needed by uvicorn to start the ASGI server
+# to start the server run "uvicorn main:app"
+app = create_app(settings)
