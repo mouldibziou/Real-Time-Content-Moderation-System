@@ -4,3 +4,7 @@ Finetuning/data/
 models/baseline/v*/
 models/distilbert/v*/
 models/hatebert/v*/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
