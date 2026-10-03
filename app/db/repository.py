@@ -18,6 +18,11 @@ async def save_classification(
         thresholds: dict,
         labels: dict,
 ):
+    """Persist one classify result after the response returned.
+
+    Use case: POST /v1/classify return-first path. Handler generates id
+    upfront, returns {id, text, labels}, then background task calls this.
+    """
     # Keyword construction only; server owns created_at via now().
     new_classification = Classification(
         id=id,
@@ -38,10 +43,11 @@ async def get_classification(
         *,
         classification_id: UUID
 ):
-    """
-    lookup function for the explanation endpoint.
-    Returns the full row so callers get text + version + labels
-    in one PK hit; handler maps None to 404.
+    """Fetch one classification by PK for strict explain and detail views.
+
+    Use case: POST /v1/explain takes classification_id, loads the exact
+    stored text to run inference on; GET detail reuses the same row.
+    Returns full row or None (route maps None to 404).
     """
     return await session.get(Classification, classification_id)
 
@@ -51,9 +57,11 @@ async def save_classifications_batch(
     *,
     items: list[dict],
 ) -> None:
-    # Batch is one transaction: ids pre-generated upstream so the response
-    # can return before this background commit. Single commit keeps
-    # texts + results atomically together; caller chunks if huge.
+    """Persist one classify_batch result set in a single transaction.
+
+    Use case: POST /v1/classify_batch return-first path. Ids pre-generated
+    so the response returns before this background commit.
+    """
     session.add_all(
         [
             Classification(
@@ -79,7 +87,11 @@ async def find_explanation(
     label: str,
     model_version: str,
 ):
-    # Cache check before GPU: hit returns instantly, miss runs the pool.
+    """Cache check before GPU work for strict explain.
+
+    Use case: POST /v1/explain hits this first; hit returns spans
+    instantly, miss runs the pool then save_explanation.
+    """
     stmt = (
         select(Explanation)
         .where(Explanation.classification_id == classification_id)
@@ -100,6 +112,11 @@ async def save_explanation(
     convergence_delta: float | None,
     model_version: str,
 ) -> None:
+    """Persist one explain miss after the response returned.
+
+    Use case: POST /v1/explain cache-miss path, background write so
+    repeat requests become cache hits.
+    """
     session.add(
         Explanation(
             id=id,
@@ -118,7 +135,11 @@ async def save_explanations_batch(
     *,
     items: list[dict],
 ) -> None:
-    # Multi-label future = N rows, no schema change. One commit per batch.
+    """Persist one explain_batch miss set in a single transaction.
+
+    Use case: POST /v1/explain_batch return-first path. Future multi-label
+    is N rows here with no schema change.
+    """
     session.add_all(
         [
             Explanation(
@@ -143,7 +164,11 @@ async def add_correction(
     flagged_at: datetime,
     moderator_id: str | None = None,
 ) -> None:
-    # Append-only: history preserved, latest row per classification wins.
+    """Append one moderator correction event, never update in place.
+
+    Use case: future POST /v1/classifications/{id}/corrections.
+    Latest row per classification wins for display; history preserved.
+    """
     session.add(
         CorrectionEvent(
             classification_id=classification_id,
@@ -161,7 +186,11 @@ async def list_classifications(
     limit: int = 50,
     offset: int = 0,
 ):
-    # Dashboard feed: newest first, paginated. Filters join later.
+    """Paginated newest-first feed for the moderator dashboard.
+
+    Use case: future GET /v1/classifications list. Filters and
+    latest-correction joins extend this query later.
+    """
     stmt = (
         select(Classification)
         .order_by(Classification.created_at.desc())
