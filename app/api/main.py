@@ -15,6 +15,12 @@ from app.errors import (
     OperationWaitTimeoutError,
 )
 
+"""
+NOTE: reminder
+
+>>> The database design is return-first-persist-after for p95, strict explain-by-ID
+"""
+
 def create_app(
         settings: RuntimeSettings,
         *,
