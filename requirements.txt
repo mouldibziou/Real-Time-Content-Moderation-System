@@ -8,3 +8,6 @@ datasets
 accelerate
 captum
 fastapi[standard]
+sqlalchemy
+sqlalchemy[asyncio]
+asyncpg
