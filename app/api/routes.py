@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated
+from uuid import uuid4
 from fastapi import APIRouter
 from fastapi.params import Depends
 
@@ -68,11 +69,18 @@ async def classify_text(
     executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
     payload: ClassifyRequest
 ):
+    """
+    classifies the input text to the target labels,
+    client can use classification_id to explain the classified text
+    turning one-shot inference into addressable explainable history
+    """
     text = payload.text
     result = await _call_runtime(runtime.predict, executor, text) # NOTE: Next time figure this out BETTER
+    classification_id = uuid4()
     return {
         "text": text,
-        "labels": result.labels
+        "labels": result.labels,
+        "classification_id": classification_id
     }
 
 @router.post("/classify_batch", response_model=ClassifyBatchResponse)
@@ -85,7 +93,7 @@ async def classify_batch(
     results = await _call_runtime(runtime.predict_batch, executor, texts)
     return {
         "results": [
-            {"text": text, "labels": r.labels}
+            {"text": text, "labels": r.labels, "classification_id": uuid4()}
             for text, r in zip(texts, results)
         ]
     }

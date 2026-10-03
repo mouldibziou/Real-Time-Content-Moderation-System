@@ -1,4 +1,5 @@
 from typing import Annotated, Literal
+from uuid import UUID
 from pydantic import BaseModel, Field
 
 ToxicLabel = Literal['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
@@ -69,6 +70,7 @@ class ClassifyResponse(BaseModel):
 
     text: str
     labels: dict[ToxicLabel, LabelPredictionResponse]
+    classification_id: UUID
 
 class ClassifyBatchResponse(BaseModel):
     model_config = {"extra": "forbid"}
