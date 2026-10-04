@@ -411,8 +411,9 @@ async def list_classifications_view(
     db: Annotated[AsyncSession, Depends(get_db)],
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
+    corrected: Annotated[bool | None, Query(description="None=all, true=only corrected, false=queue view")] = None,
 ):
-    rows = await list_classifications(db, limit=limit, offset=offset)
+    rows = await list_classifications(db, limit=limit, offset=offset, corrected=corrected)
     ids = [r.id for r in rows]
     latest = await list_latest_corrections(db, classification_ids=ids)
     items = []

@@ -185,18 +185,28 @@ async def list_classifications(
     *,
     limit: int = 50,
     offset: int = 0,
+    corrected: bool | None = None,
 ):
     """Paginated newest-first feed for the moderator dashboard.
 
-    Use case: future GET /v1/classifications list. Filters and
-    latest-correction joins extend this query later.
+    Use case: GET /v1/classifications list. corrected=None returns all,
+    True only corrected, False only uncorrected (queue view). Filter
+    pushed to SQL via EXISTS so pages stay exact.
     """
-    stmt = (
-        select(Classification)
-        .order_by(Classification.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-    )
+    stmt = select(Classification)
+    if corrected is True:
+        stmt = stmt.where(
+            select(CorrectionEvent.id)
+            .where(CorrectionEvent.classification_id == Classification.id)
+            .exists()
+        )
+    elif corrected is False:
+        stmt = stmt.where(
+            ~select(CorrectionEvent.id)
+            .where(CorrectionEvent.classification_id == Classification.id)
+            .exists()
+        )
+    stmt = stmt.order_by(Classification.created_at.desc()).limit(limit).offset(offset)
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
