@@ -28,6 +28,6 @@ engine = create_async_engine(
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    # Per-request session: lends one pooled connection, guarantees close.
+    # Per-request session(transaction): lends one pooled connection, guarantees close.
     async with async_session() as session:
         yield session

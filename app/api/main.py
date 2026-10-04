@@ -14,12 +14,7 @@ from app.errors import (
     RuntimeBusyError,
     OperationWaitTimeoutError,
 )
-
-"""
-NOTE: reminder
-
->>> The database design is return-first-persist-after for p95, strict explain-by-ID
-"""
+from app.db.engine import engine
 
 def create_app(
         settings: RuntimeSettings,
@@ -44,12 +39,14 @@ def create_app(
         # runtime and executor should be published after runtime success
         app.state.runtime = runtime
         app.state.runtime_executor = runtime_executor
+        app.state.engine = engine
 
         try:
             yield
         finally:
             runtime.stop()
             runtime_executor.shutdown(wait=True, cancel_futures=True)
+            await engine.dispose() # We await because it returns a coroutine
 
     app = FastAPI(
         title="Toxicity Classification API",
