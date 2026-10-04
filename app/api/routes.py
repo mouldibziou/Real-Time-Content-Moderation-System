@@ -54,21 +54,36 @@ router = APIRouter(prefix="/v1")
 # NOTE: we put no awaits here because these methods are strictly
 # synchronous (standard def), as they are conditioned in the
 # ApplicationRuntime logic.
-@router.get("/model_info", response_model=ModelInfoResponse)
+@router.get(
+    "/model_info",
+    response_model=ModelInfoResponse,
+    summary="Model metadata",
+    description="Returns the loaded model type, device, labels, thresholds and limits. No GPU work, safe to poll.",
+)
 async def get_model_info(
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
     ):
     model_info = runtime.model_info()
     return _model_info_to_list(model_info)
 
-@router.get("/status", response_model=StatusResponse)
+@router.get(
+    "/status",
+    response_model=StatusResponse,
+    summary="Runtime queue status",
+    description="State plus waiting counts and queue capacities. Inline microsecond read; use for backpressure dashboards.",
+)
 async def get_runtime_status(
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
 ):
     status = runtime.status()
     return _status_to_list(status)
 
-@router.get("/health/ready", response_model=ReadinessResponse)
+@router.get(
+    "/health/ready",
+    response_model=ReadinessResponse,
+    summary="Readiness probe",
+    description="True when the model is loaded and accepting inference. For orchestrators, not moderators. Checks runtime only; DB outages do not fail readiness (return-first degraded mode).",
+)
 async def get_readiness(
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
 ):
@@ -79,7 +94,11 @@ async def get_readiness(
     is_ready = runtime.is_ready()
     return {"is_ready": is_ready}
 
-@router.get("/health/live")
+@router.get(
+    "/health/live",
+    summary="Liveness probe",
+    description="Process alive check. No runtime, no DB, always 200 when Python answers. Restart on failure.",
+)
 async def health_check() -> dict[str, str]:
     return {"status": "healthy"}
 
@@ -89,7 +108,12 @@ async def health_check() -> dict[str, str]:
 # NOTE: we await _call_runtime because it is an async function as it 
 # declared in dependencies.py, because we want to call runtime functions
 # asynchronously, even they are synchronized by default.
-@router.post("/classify", response_model=ClassifyResponse)
+@router.post(
+    "/classify",
+    response_model=ClassifyResponse,
+    summary="Classify one comment",
+    description="Scores text on all 6 labels. Returns immediately with a classification_id; row persists in background. Use the id for strict explain. Example: {\"text\": \"You are an idiot\"}.",
+)
 async def classify_text(
     background_tasks: BackgroundTasks,
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
@@ -161,7 +185,12 @@ async def _persist_classification(
     except Exception:
         logger.exception("background persist failed for classification %s", id)
 
-@router.post("/classify_batch", response_model=ClassifyBatchResponse)
+@router.post(
+    "/classify_batch",
+    response_model=ClassifyBatchResponse,
+    summary="Classify a batch",
+    description="Scores 1..N texts in input order, one transaction persisted in background. Example: {\"texts\": [\"You are an idiot\", \"Thanks for helping\"]}.",
+)
 async def classify_batch(
     background_tasks: BackgroundTasks,
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
@@ -204,7 +233,12 @@ async def _persist_classifications_batch(*, items: list[dict]):
     except Exception:
         logger.exception("background persist failed for %d classifications", len(items))
 
-@router.post("/explain", response_model=ExplainResponse)
+@router.post(
+    "/explain",
+    response_model=ExplainResponse,
+    summary="Explain one classification",
+    description="Strict: requires a prior classification_id (404 if unknown). Cache hit returns stored spans with zero GPU; miss runs Integrated Gradients then background-saves. Example: {\"classification_id\": \"<uuid from /classify>\", \"label\": \"toxic\"}.",
+)
 async def explain_text(
     background_tasks: BackgroundTasks,
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
@@ -285,7 +319,12 @@ async def _persist_explanation(
     except Exception:
         logger.exception("background persist failed for explanation %s", id)
 
-@router.post("/explain_batch", response_model=ExplainBatchResponse)
+@router.post(
+    "/explain_batch",
+    response_model=ExplainBatchResponse,
+    summary="Explain a batch for one label",
+    description="Strict per id with shared label. Loads stored texts, serves cache hits instantly, runs one pooled batch for misses only. 404s on first unknown id to keep order exact.",
+)
 async def explain_batch(
     background_tasks: BackgroundTasks,
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
@@ -406,7 +445,12 @@ def _correction_to_response(row) -> dict:
     }
 
 
-@router.get("/classifications", response_model=ClassificationListResponse)
+@router.get(
+    "/classifications",
+    response_model=ClassificationListResponse,
+    summary="List classifications",
+    description="Newest-first feed with corrected flag. corrected=None shows all, false is the moderator queue (uncorrected only), true is audit (corrected only).",
+)
 async def list_classifications_view(
     db: Annotated[AsyncSession, Depends(get_db)],
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -431,7 +475,12 @@ async def list_classifications_view(
     return {"items": items, "limit": limit, "offset": offset}
 
 
-@router.get("/classifications/{classification_id}", response_model=ClassificationDetailResponse)
+@router.get(
+    "/classifications/{classification_id}",
+    response_model=ClassificationDetailResponse,
+    summary="Classification detail",
+    description="Immutable prediction plus corrected overlay (latest event wins) and all cached explanations. 404 if id unknown.",
+)
 async def get_classification_detail(
     classification_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -466,6 +515,8 @@ async def get_classification_detail(
     "/classifications/{classification_id}/corrections",
     response_model=CorrectionResponse,
     status_code=201,
+    summary="Submit moderator correction",
+    description="Appends a full 6-boolean verdict (even agreeing labels). Must match exactly the stored label set or 422. Latest event wins for display; history preserved. Example corrected_labels: {\"toxic\": true, \"severe_toxic\": false, \"obscene\": false, \"threat\": false, \"insult\": true, \"identity_hate\": false}.",
 )
 async def create_correction(
     classification_id: UUID,
