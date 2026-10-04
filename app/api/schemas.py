@@ -112,3 +112,57 @@ class ReadinessResponse(BaseModel):
     model_config = {"extra": "forbid"}
 
     is_ready: bool
+
+
+class CorrectionRequest(BaseModel):
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
+
+    # Full 6-label moderator verdict; True/False per label even when
+    # agreeing with the model, so training sets stay unambiguous.
+    corrected_labels: dict[ToxicLabel, bool]
+    moderator_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class CorrectionResponse(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    id: UUID
+    classification_id: UUID
+    corrected_labels: dict[ToxicLabel, bool]
+    moderator_id: str | None = None
+    flagged_at: object
+    created_at: object
+
+
+class ClassificationDetailResponse(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    classification_id: UUID
+    text: str
+    labels: dict[ToxicLabel, LabelPredictionResponse]
+    model_version: str
+    model_type: str
+    created_at: object
+    # Corrected view: original labels stay immutable above; when True,
+    # display corrected_labels instead for moderators and training.
+    corrected: bool
+    corrected_labels: dict[ToxicLabel, bool] | None = None
+    explanations: list[ExplainResponse]
+
+
+class ClassificationListItem(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    classification_id: UUID
+    text: str
+    labels: dict[ToxicLabel, LabelPredictionResponse]
+    corrected: bool
+    created_at: object
+
+
+class ClassificationListResponse(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    items: list[ClassificationListItem]
+    limit: int
+    offset: int

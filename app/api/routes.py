@@ -3,16 +3,20 @@ from hashlib import sha256
 from logging import getLogger
 from typing import Annotated
 from uuid import uuid4, UUID
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.params import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import(
     BatchClassifyRequest,
     BatchExplainRequest,
+    ClassificationDetailResponse,
+    ClassificationListResponse,
     ClassifyBatchResponse,
     ClassifyRequest,
     ClassifyResponse,
+    CorrectionRequest,
+    CorrectionResponse,
     ExplainBatchResponse,
     ExplainRequest,
     ExplainResponse,
@@ -27,8 +31,13 @@ from app.api.dependencies import (
 )
 from app.db.engine import async_session, get_db
 from app.db.repository import (
+    add_correction,
     find_explanation,
     get_classification,
+    get_latest_correction,
+    list_classifications,
+    list_explanations,
+    list_latest_corrections,
     save_classification,
     save_classifications_batch,
     save_explanation,
@@ -379,3 +388,109 @@ def _status_to_list(status: RuntimeStatus):
         "classification_queue_capacity": status.classification_queue_capacity,
         "explanation_queue_capacity": status.explanation_queue_capacity,
     }
+
+
+def _labels_to_response(labels: dict) -> dict:
+    # DB stores plain {label: {probability, predicted}}; already response-shaped.
+    return labels
+
+
+def _correction_to_response(row) -> dict:
+    return {
+        "id": row.id,
+        "classification_id": row.classification_id,
+        "corrected_labels": row.corrected_labels,
+        "moderator_id": row.moderator_id,
+        "flagged_at": row.flagged_at,
+        "created_at": row.created_at,
+    }
+
+
+@router.get("/classifications", response_model=ClassificationListResponse)
+async def list_classifications_view(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+):
+    rows = await list_classifications(db, limit=limit, offset=offset)
+    ids = [r.id for r in rows]
+    latest = await list_latest_corrections(db, classification_ids=ids)
+    items = []
+    for r in rows:
+        corr = latest.get(str(r.id))
+        items.append(
+            {
+                "classification_id": r.id,
+                "text": r.text,
+                "labels": _labels_to_response(r.labels),
+                "corrected": corr is not None,
+                "created_at": r.created_at,
+            }
+        )
+    return {"items": items, "limit": limit, "offset": offset}
+
+
+@router.get("/classifications/{classification_id}", response_model=ClassificationDetailResponse)
+async def get_classification_detail(
+    classification_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    row = await get_classification(db, classification_id=classification_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="classification not found")
+    corr = await get_latest_correction(db, classification_id=classification_id)
+    expl_rows = await list_explanations(db, classification_id=classification_id)
+    return {
+        "classification_id": row.id,
+        "text": row.text,
+        "labels": _labels_to_response(row.labels),
+        "model_version": row.model_version,
+        "model_type": row.model_type,
+        "created_at": row.created_at,
+        "corrected": corr is not None,
+        "corrected_labels": (corr.corrected_labels if corr is not None else None),
+        "explanations": [
+            {
+                "text": row.text,
+                "label": e.label,
+                "spans": e.spans,
+                "convergence_delta": e.convergence_delta,
+            }
+            for e in expl_rows
+        ],
+    }
+
+
+@router.post(
+    "/classifications/{classification_id}/corrections",
+    response_model=CorrectionResponse,
+    status_code=201,
+)
+async def create_correction(
+    classification_id: UUID,
+    payload: CorrectionRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from datetime import datetime, timezone
+
+    row = await get_classification(db, classification_id=classification_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="classification not found")
+    # Require full 6-label verdict so training rows stay unambiguous.
+    if set(payload.corrected_labels.keys()) != set(row.labels.keys()):
+        raise HTTPException(
+            status_code=422,
+            detail=f"corrected_labels must contain exactly {sorted(row.labels.keys())}",
+        )
+    flagged_at = datetime.now(timezone.utc)
+    # Repository commits; re-fetch latest to return the stored row shape.
+    await add_correction(
+        db,
+        classification_id=classification_id,
+        corrected_labels=dict(payload.corrected_labels),
+        flagged_at=flagged_at,
+        moderator_id=payload.moderator_id,
+    )
+    latest = await get_latest_correction(db, classification_id=classification_id)
+    assert latest is not None
+    return _correction_to_response(latest)

@@ -199,3 +199,67 @@ async def list_classifications(
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+async def get_latest_correction(
+    session: AsyncSession,
+    *,
+    classification_id: UUID,
+):
+    """Latest correction wins for display; None means uncorrected.
+
+    Use case: detail and list overlay without mutating history.
+    """
+    stmt = (
+        select(CorrectionEvent)
+        .where(CorrectionEvent.classification_id == classification_id)
+        .order_by(CorrectionEvent.created_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    return result.scalars().first()
+
+
+async def list_latest_corrections(
+    session: AsyncSession,
+    *,
+    classification_ids: list[UUID],
+):
+    """Batch latest-correction lookup to avoid N+1 on list pages.
+
+    Use case: GET list overlays corrected flags in two queries total.
+    Returns map of classification_id string to row.
+    """
+    if not classification_ids:
+        return {}
+    stmt = (
+        select(CorrectionEvent)
+        .where(CorrectionEvent.classification_id.in_(classification_ids))
+        .order_by(CorrectionEvent.classification_id, CorrectionEvent.created_at.desc())
+    )
+    result = await session.execute(stmt)
+    rows = list(result.scalars().all())
+    latest: dict[str, object] = {}
+    for row in rows:
+        key = str(row.classification_id)
+        if key not in latest:
+            latest[key] = row
+    return latest
+
+
+async def list_explanations(
+    session: AsyncSession,
+    *,
+    classification_id: UUID,
+):
+    """All cached explanations for one classification across labels/versions.
+
+    Use case: detail view shows which labels are already explained.
+    """
+    stmt = (
+        select(Explanation)
+        .where(Explanation.classification_id == classification_id)
+        .order_by(Explanation.created_at.desc())
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
