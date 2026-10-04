@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import ForeignKey, Text, String, Float, UniqueConstraint, func
+from sqlalchemy import ForeignKey, Index, Text, String, Float, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -21,7 +21,10 @@ class Classification(Base):
     labels: Mapped[dict] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[object] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 
-    __table_args__ = (UniqueConstraint("text_hash", "model_version", name="uq_class_text_model"),)
+    __table_args__ = (
+        UniqueConstraint("text_hash", "model_version", name="uq_class_text_model"),
+        Index("ix_class_created", "created_at"),
+    )
 
 
 class CorrectionEvent(Base):
@@ -33,6 +36,11 @@ class CorrectionEvent(Base):
     moderator_id: Mapped[str | None] = mapped_column(String, nullable=True)
     flagged_at: Mapped[object] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     created_at: Mapped[object] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_corr_class", "classification_id"),
+        Index("ix_corr_latest", "classification_id", "created_at"),
+    )
 
 
 class Explanation(Base):
@@ -46,4 +54,7 @@ class Explanation(Base):
     model_version: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[object] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 
-    __table_args__ = (UniqueConstraint("classification_id", "label", "model_version", name="uq_expl_cache"),)
+    __table_args__ = (
+        UniqueConstraint("classification_id", "label", "model_version", name="uq_expl_cache"),
+        Index("ix_expl_class", "classification_id"),
+    )

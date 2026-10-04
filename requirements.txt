@@ -11,3 +11,6 @@ fastapi[standard]
 sqlalchemy
 sqlalchemy[asyncio]
 asyncpg
+alembic
+psycopg2-binary
+python-dotenv
