@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import inspect
 import torch
 from captum.attr import LayerIntegratedGradients
 
@@ -15,6 +16,17 @@ class AttributionResult:
     label: str
     spans: tuple[AttributedSpan, ...]
     convergence_delta: float | None = None
+
+def _model_supports_token_type_ids(model) -> bool:
+    """Detect whether the model's forward() accepts token_type_ids.
+
+    Falls back to True (previous behavior) when introspection fails,
+    e.g. for heavily mocked models in tests.
+    """
+    try:
+        return "token_type_ids" in inspect.signature(model.forward).parameters
+    except (TypeError, ValueError):
+        return True
 
 class ToxicityExplainer:
     """
@@ -49,6 +61,11 @@ class ToxicityExplainer:
             self._forward,
             self.model.get_input_embeddings(),
         )
+
+        # The saved DistilBERT tokenizer emits token_type_ids, which
+        # DistilBERT does not accept. Only forward them to models whose
+        # forward() declares the parameter (e.g. BERT-based models).
+        self._supports_token_type_ids = _model_supports_token_type_ids(model)
 
         if n_steps < 1:
             raise ValueError("n_steps must be at least 1")
@@ -135,7 +152,7 @@ class ToxicityExplainer:
             "attention_mask": attention_mask,
         }
 
-        if token_type_ids is not None:
+        if token_type_ids is not None and self._supports_token_type_ids:
             model_inputs["token_type_ids"] = token_type_ids
         
         return self.model(**model_inputs).logits

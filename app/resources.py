@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from time import monotonic
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerFast
+from onnxruntime import InferenceSession
 import torch
 import logging
 
@@ -16,6 +17,7 @@ class ModelResources:
     model: PreTrainedModel
     tokenizer: PreTrainedTokenizerFast
     device: torch.device
+    ort_session: InferenceSession | None = None
 
 def load_resources(settings: RuntimeSettings) -> ModelResources:
     loading_started = monotonic()
@@ -66,6 +68,10 @@ def load_resources(settings: RuntimeSettings) -> ModelResources:
     model.to(device)
     model.eval()
 
+    ort_session = None
+    if settings.inference_backend == "onnx":
+        ort_session = load_onnx_session(settings)
+
     elapsed_seconds = monotonic() - loading_started
     logger.info(
         "Model loading completed device=%s duration_seconds=%.3f",
@@ -77,7 +83,36 @@ def load_resources(settings: RuntimeSettings) -> ModelResources:
         model=model,
         tokenizer=tokenizer,
         device=device,
+        ort_session=ort_session,
     )
+
+def load_onnx_session(settings: RuntimeSettings) -> InferenceSession:
+    """Load the exported ONNX model for classification inference.
+
+    The torch model above is still required for explanations, which need
+    gradients. The tokenizer always comes from settings.model_dir; only the
+    classification forward pass moves to ONNX.
+    """
+    onnx_file = settings.onnx_model_dir / "model.onnx"
+    if not onnx_file.is_file():
+        raise FileNotFoundError(
+            f"ONNX model file not found: {onnx_file}. "
+            f"Export it from {settings.model_dir} "
+            f"(e.g. optimum-cli export onnx --model {settings.model_dir} "
+            f"--task text-classification --opset 14 --output {settings.onnx_model_dir}), "
+            f"or set inference_backend='torch'."
+        )
+
+    session = InferenceSession(str(onnx_file), providers=list(settings.onnx_providers))
+
+    input_names = {model_input.name for model_input in session.get_inputs()}
+    if not {"input_ids", "attention_mask"} <= input_names:
+        raise ValueError(
+            f"ONNX model inputs {sorted(input_names)} must include "
+            f"'input_ids' and 'attention_mask'."
+        )
+
+    return session
 
 def resolve_device(value: str) -> torch.device:
     """Resolve a supported device without silently falling back to CPU."""

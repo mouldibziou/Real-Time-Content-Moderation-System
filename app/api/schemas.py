@@ -107,6 +107,7 @@ class ModelInfoResponse(BaseModel):
     thresholds: list[float]
     max_length: int = Field(ge=1)
     explanation_steps: int = Field(ge=1)
+    inference_backend: str
 
 class ReadinessResponse(BaseModel):
     model_config = {"extra": "forbid"}

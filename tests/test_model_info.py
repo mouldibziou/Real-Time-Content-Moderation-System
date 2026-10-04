@@ -50,6 +50,7 @@ class ModelInfoTests(TestCase):
         self.assertEqual(result.device, "cpu")
         self.assertEqual(set(asdict(result)), {
             "model_type", "device", "labels", "thresholds", "max_length", "explanation_steps",
+            "inference_backend",
         })
 
     def test_metadata_returns_while_explanation_is_running(self):
@@ -89,10 +90,10 @@ class ModelInfoTests(TestCase):
 
     def test_builder_uses_loaded_model_type_and_resolved_device(self):
         settings = RuntimeSettings(device="cuda", labels=("a", "b"), thresholds=(0.2, 0.8),
-                                   max_length=128, n_steps=7)
+                                   max_length=128, n_steps=7, inference_backend="torch")
         resources = SimpleNamespace(
             model=SimpleNamespace(config=SimpleNamespace(model_type="distilbert")),
-            tokenizer=object(), device=torch.device("cuda:1"),
+            tokenizer=object(), device=torch.device("cuda:1"), ort_session=None,
         )
         with patch('app.services.load_resources', return_value=resources) as loader, \
                 patch('app.services.ToxicityClassifier') as classifier, \
@@ -102,8 +103,39 @@ class ModelInfoTests(TestCase):
         self.assertEqual(services.model_info, ModelInfo(
             model_type="distilbert", device="cuda:1", labels=("a", "b"),
             thresholds=(0.2, 0.8), max_length=128, explanation_steps=7,
+            inference_backend="torch",
         ))
         self.assertIs(services.classifier, classifier.return_value)
         self.assertIs(services.explainer, explainer.return_value)
         self.assertIs(classifier.call_args.kwargs['model'], resources.model)
         self.assertIs(explainer.call_args.kwargs['model'], resources.model)
+
+    def test_builder_wires_onnx_classifier_by_default(self):
+        settings = RuntimeSettings(device="cpu")
+        self.assertEqual(settings.inference_backend, "onnx")
+        session = object()
+        resources = SimpleNamespace(
+            model=SimpleNamespace(config=SimpleNamespace(model_type="distilbert")),
+            tokenizer=object(), device=torch.device("cpu"), ort_session=session,
+        )
+        with patch('app.services.load_resources', return_value=resources), \
+                patch('app.services.ToxicityOnnxClassifier') as onnx_classifier, \
+                patch('app.services.ToxicityExplainer') as explainer:
+            services = build_services(settings)
+        self.assertIs(services.classifier, onnx_classifier.return_value)
+        self.assertIs(services.explainer, explainer.return_value)
+        self.assertIs(onnx_classifier.call_args.kwargs['session'], session)
+        self.assertIs(onnx_classifier.call_args.kwargs['tokenizer'], resources.tokenizer)
+        # The explainer always keeps the torch model, which ONNX cannot replace.
+        self.assertIs(explainer.call_args.kwargs['model'], resources.model)
+        self.assertEqual(services.model_info.inference_backend, "onnx")
+
+    def test_builder_rejects_onnx_without_loaded_session(self):
+        settings = RuntimeSettings(device="cpu", inference_backend="onnx")
+        resources = SimpleNamespace(
+            model=SimpleNamespace(config=SimpleNamespace(model_type="distilbert")),
+            tokenizer=object(), device=torch.device("cpu"), ort_session=None,
+        )
+        with patch('app.services.load_resources', return_value=resources):
+            with self.assertRaisesRegex(RuntimeError, "no ONNX session was loaded"):
+                build_services(settings)

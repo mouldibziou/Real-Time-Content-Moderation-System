@@ -13,7 +13,7 @@ from app.settings import RuntimeSettings
 class ResourceLoadingLoggingTests(TestCase):
     def setUp(self):
         directory = self.enterContext(TemporaryDirectory())
-        self.settings = RuntimeSettings(model_dir=Path(directory), device="cpu")
+        self.settings = RuntimeSettings(model_dir=Path(directory), device="cpu", inference_backend="torch")
         self.tokenizer = Mock(is_fast=True, pad_token_id=0)
         self.model = Mock()
         self.model.config.num_labels = len(self.settings.labels)

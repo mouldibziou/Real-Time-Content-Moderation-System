@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from app.classifier import ToxicityClassifier
+from app.classifier import ToxicityClassifier, ToxicityOnnxClassifier
 from app.explainer import ToxicityExplainer
 from app.metadata import ModelInfo
 from app.resources import load_resources
@@ -8,13 +8,17 @@ from app.settings import RuntimeSettings
 
 @dataclass(frozen=True)
 class ApplicationServices:
-    classifier: ToxicityClassifier
+    classifier: ToxicityClassifier | ToxicityOnnxClassifier
     explainer: ToxicityExplainer
     model_info: ModelInfo
 
 def build_services(settings: RuntimeSettings) -> ApplicationServices:
     """
-    Enforcing that the two services share the same model and tokenizer
+    Enforcing that the two services share the same model and tokenizer.
+
+    Classification runs on the configured inference backend (ONNX by
+    default), while explanations always use the torch model, which provides
+    the gradients ONNX cannot.
     """
     resources = load_resources(settings)
 
@@ -27,14 +31,25 @@ def build_services(settings: RuntimeSettings) -> ApplicationServices:
     thresholds = settings.thresholds
     n_steps = settings.n_steps
 
-    classifier = ToxicityClassifier(
-        model=model, 
-        tokenizer=tokenizer, 
-        thresholds=thresholds, 
-        device=device, 
-        max_length=max_length, 
-        labels=labels
-    )
+    if settings.inference_backend == "onnx":
+        if resources.ort_session is None:
+            raise RuntimeError("ONNX inference backend selected but no ONNX session was loaded")
+        classifier = ToxicityOnnxClassifier(
+            session=resources.ort_session,
+            tokenizer=tokenizer,
+            thresholds=thresholds,
+            max_length=max_length,
+            labels=labels
+        )
+    else:
+        classifier = ToxicityClassifier(
+            model=model,
+            tokenizer=tokenizer,
+            thresholds=thresholds,
+            device=device,
+            max_length=max_length,
+            labels=labels
+        )
 
     explainer = ToxicityExplainer(
         model=model, 
@@ -51,7 +66,8 @@ def build_services(settings: RuntimeSettings) -> ApplicationServices:
         labels=settings.labels,
         thresholds=settings.thresholds,
         max_length=settings.max_length,
-        explanation_steps=settings.n_steps
+        explanation_steps=settings.n_steps,
+        inference_backend=settings.inference_backend
         )
 
     return ApplicationServices(

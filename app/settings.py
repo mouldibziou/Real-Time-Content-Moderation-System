@@ -11,6 +11,9 @@ class RuntimeSettings:
     device: str = "mps"
     n_steps: int = 32
     max_text_chars: int = 10_000
+    inference_backend: str = "onnx"
+    onnx_model_dir: Path = Path("models/distilbert/v2.0.0-onnx")
+    onnx_providers: tuple[str, ...] = ("CPUExecutionProvider",)
 
     """
     NOTE: the below values are provisional defaults, they will be altered accordingly with maximum acceptable latency.
@@ -79,3 +82,13 @@ class RuntimeSettings:
             raise TypeError("Classification burst limit must be an integer")
         if self.classification_burst_limit <= 0:
             raise ValueError("Classification burst limit must be positive")
+        if not isinstance(self.inference_backend, str):
+            raise TypeError("Inference backend must be a string")
+        if self.inference_backend not in ("torch", "onnx"):
+            raise ValueError("Inference backend must be either 'torch' or 'onnx'")
+        if not isinstance(self.onnx_model_dir, Path):
+            raise TypeError("ONNX model directory must be a pathlib.Path")
+        if not isinstance(self.onnx_providers, (tuple, list)) or not self.onnx_providers:
+            raise ValueError("ONNX providers must be a nonempty tuple or list")
+        if any(not isinstance(provider, str) or not provider.strip() for provider in self.onnx_providers):
+            raise ValueError("ONNX providers must be nonempty strings")

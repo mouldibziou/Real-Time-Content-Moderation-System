@@ -8,3 +8,4 @@ class ModelInfo:
     thresholds: tuple[float, ...]
     max_length: int
     explanation_steps: int
+    inference_backend: str = "onnx"

@@ -1,0 +1,243 @@
+"""Tests for ONNX classification inference and backend wiring.
+
+The torch path is covered by the pre-existing suite; these tests pin the new
+behavior: the ONNX classifier contract, the token_type_ids fix on the torch
+classifier, settings validation, and ONNX session loading.
+"""
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest import TestCase
+from unittest.mock import Mock, patch
+
+import numpy as np
+import torch
+
+from app.classifier import ToxicityClassifier, ToxicityOnnxClassifier
+from app.settings import RuntimeSettings
+
+
+LABELS = ("toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate")
+THRESHOLDS = (0.74, 0.45, 0.74, 0.59, 0.61, 0.76)
+# Fixed logits chosen so each label lands on a known side of its threshold.
+LOGITS = [[2.0, -2.0, 0.0, 1.0, -0.5, 3.0]]
+EXPECTED_PREDICTED = (True, False, False, True, False, True)
+
+
+def sigmoid(values):
+    return 1.0 / (1.0 + np.exp(-np.asarray(values, dtype=np.float64)))
+
+
+class FakeSession:
+    """Minimal onnxruntime stand-in: records feeds, replays fixed logits."""
+
+    def __init__(self, logits):
+        self.logits = np.asarray(logits, dtype=np.float32)
+        self.feeds = []
+
+    def run(self, output_names, feed):
+        self.feeds.append(feed)
+        rows = len(next(iter(feed.values())))
+        return [np.tile(self.logits, (rows, 1))]
+
+
+def numpy_tokenizer(texts, **kwargs):
+    if isinstance(texts, str):
+        texts = [texts]
+    width = max(len(text) for text in texts)
+    return {
+        "input_ids": np.zeros((len(texts), width), dtype=np.int64),
+        "attention_mask": np.ones((len(texts), width), dtype=np.int64),
+    }
+
+
+class OnnxClassifierTests(TestCase):
+    def setUp(self):
+        self.session = FakeSession(LOGITS)
+        self.classifier = ToxicityOnnxClassifier(
+            session=self.session,
+            tokenizer=numpy_tokenizer,
+            thresholds=THRESHOLDS,
+            labels=LABELS,
+            max_length=512,
+        )
+
+    def test_predict_returns_probabilities_and_thresholded_labels(self):
+        result = self.classifier.predict("hello world")
+        self.assertEqual(tuple(result.labels), LABELS)
+        expected_probs = sigmoid(LOGITS)[0]
+        for label, expected_prob, expected_pred in zip(LABELS, expected_probs, EXPECTED_PREDICTED):
+            prediction = result.labels[label]
+            self.assertAlmostEqual(prediction.probability, float(expected_prob), places=6)
+            self.assertIs(prediction.predicted, expected_pred)
+
+    def test_predict_batch_preserves_input_order(self):
+        results = self.classifier.predict_batch(["first", "second"])
+        self.assertEqual(len(results), 2)
+        for result in results:
+            self.assertEqual(
+                tuple(pred.predicted for pred in result.labels.values()),
+                EXPECTED_PREDICTED,
+            )
+
+    def test_session_feed_contains_only_int64_inputs(self):
+        self.classifier.predict("hello")
+        feed = self.session.feeds[-1]
+        self.assertEqual(set(feed), {"input_ids", "attention_mask"})
+        for value in feed.values():
+            self.assertEqual(value.dtype, np.int64)
+
+    def test_parity_with_torch_classifier_on_same_logits(self):
+        torch_logits = torch.tensor(LOGITS, dtype=torch.float32)
+        model = Mock()
+        model.return_value = SimpleNamespace(logits=torch_logits)
+
+        def torch_tokenizer(texts, **kwargs):
+            rows = 1 if isinstance(texts, str) else len(texts)
+            return {
+                "input_ids": torch.zeros(rows, 4, dtype=torch.long),
+                "attention_mask": torch.ones(rows, 4, dtype=torch.long),
+                # The saved tokenizer emits these; DistilBERT must not receive them.
+                "token_type_ids": torch.zeros(rows, 4, dtype=torch.long),
+            }
+
+        torch_classifier = ToxicityClassifier(
+            model=model,
+            tokenizer=torch_tokenizer,
+            thresholds=THRESHOLDS,
+            labels=LABELS,
+            device=torch.device("cpu"),
+            max_length=512,
+        )
+        torch_result = torch_classifier.predict("hello world")
+        onnx_result = self.classifier.predict("hello world")
+        for label in LABELS:
+            self.assertAlmostEqual(
+                torch_result.labels[label].probability,
+                onnx_result.labels[label].probability,
+                places=6,
+            )
+            self.assertEqual(
+                torch_result.labels[label].predicted,
+                onnx_result.labels[label].predicted,
+            )
+
+
+class TorchTokenTypeIdsTests(TestCase):
+    def test_torch_classifier_drops_token_type_ids(self):
+        received = {}
+
+        def fake_model(**kwargs):
+            received.update(kwargs)
+            batch = kwargs["input_ids"].shape[0]
+            return SimpleNamespace(logits=torch.zeros(batch, len(LABELS)))
+
+        def tokenizer(texts, **kwargs):
+            rows = 1 if isinstance(texts, str) else len(texts)
+            return {
+                "input_ids": torch.zeros(rows, 4, dtype=torch.long),
+                "attention_mask": torch.ones(rows, 4, dtype=torch.long),
+                "token_type_ids": torch.zeros(rows, 4, dtype=torch.long),
+            }
+
+        classifier = ToxicityClassifier(
+            model=fake_model,
+            tokenizer=tokenizer,
+            thresholds=THRESHOLDS,
+            labels=LABELS,
+            device=torch.device("cpu"),
+            max_length=512,
+        )
+        classifier.predict("hello")
+        self.assertEqual(set(received), {"input_ids", "attention_mask"})
+        classifier.predict_batch(["hello", "world"])
+        self.assertEqual(set(received), {"input_ids", "attention_mask"})
+
+
+class BackendSettingsTests(TestCase):
+    def test_onnx_is_the_default_backend(self):
+        settings = RuntimeSettings(device="cpu")
+        self.assertEqual(settings.inference_backend, "onnx")
+        self.assertEqual(settings.onnx_model_dir, Path("models/distilbert/v2.0.0-onnx"))
+        self.assertEqual(settings.onnx_providers, ("CPUExecutionProvider",))
+
+    def test_invalid_backend_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "either 'torch' or 'onnx'"):
+            RuntimeSettings(device="cpu", inference_backend="tensorrt")
+
+    def test_nonstring_backend_is_rejected(self):
+        with self.assertRaisesRegex(TypeError, "must be a string"):
+            RuntimeSettings(device="cpu", inference_backend=None)
+
+    def test_empty_providers_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "nonempty"):
+            RuntimeSettings(device="cpu", onnx_providers=())
+
+    def test_non_path_onnx_dir_is_rejected(self):
+        with self.assertRaisesRegex(TypeError, "pathlib.Path"):
+            RuntimeSettings(device="cpu", onnx_model_dir="models/distilbert/v2.0.0-onnx")
+
+
+class OnnxResourceLoadingTests(TestCase):
+    def _torch_mocks(self):
+        tokenizer = Mock(is_fast=True, pad_token_id=0)
+        model = Mock()
+        model.config.num_labels = len(LABELS)
+        model.config.max_position_embeddings = 512
+        model.config.model_type = "distilbert"
+        model.config.id2label = dict(enumerate(LABELS))
+        return tokenizer, model
+
+    def test_missing_onnx_file_raises_helpful_error(self):
+        from app.resources import load_resources
+
+        directory = self.enterContext(TemporaryDirectory())
+        settings = RuntimeSettings(
+            model_dir=Path(directory),
+            device="cpu",
+            inference_backend="onnx",
+            onnx_model_dir=Path(directory) / "missing-onnx",
+        )
+        tokenizer, model = self._torch_mocks()
+        with patch("app.resources.AutoTokenizer.from_pretrained", return_value=tokenizer), \
+                patch("app.resources.AutoModelForSequenceClassification.from_pretrained", return_value=model):
+            with self.assertRaisesRegex(FileNotFoundError, "inference_backend='torch'"):
+                load_resources(settings)
+
+    def test_unexpected_session_inputs_are_rejected(self):
+        from app.resources import load_onnx_session
+
+        directory = self.enterContext(TemporaryDirectory())
+        onnx_dir = Path(directory)
+        (onnx_dir / "model.onnx").write_bytes(b"fake")
+        settings = RuntimeSettings(
+            device="cpu",
+            inference_backend="onnx",
+            onnx_model_dir=onnx_dir,
+        )
+        bad_input = SimpleNamespace(name="token_type_ids")
+        session = Mock()
+        session.get_inputs.return_value = [bad_input]
+        with patch("app.resources.InferenceSession", return_value=session) as loader:
+            with self.assertRaisesRegex(ValueError, "must include 'input_ids' and 'attention_mask'"):
+                load_onnx_session(settings)
+        loader.assert_called_once()
+
+    def test_successful_load_returns_session(self):
+        from app.resources import load_onnx_session
+
+        directory = self.enterContext(TemporaryDirectory())
+        onnx_dir = Path(directory)
+        (onnx_dir / "model.onnx").write_bytes(b"fake")
+        settings = RuntimeSettings(
+            device="cpu",
+            inference_backend="onnx",
+            onnx_model_dir=onnx_dir,
+        )
+        session = Mock()
+        session.get_inputs.return_value = [
+            SimpleNamespace(name="input_ids"),
+            SimpleNamespace(name="attention_mask"),
+        ]
+        with patch("app.resources.InferenceSession", return_value=session):
+            self.assertIs(load_onnx_session(settings), session)

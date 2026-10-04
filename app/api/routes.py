@@ -416,6 +416,7 @@ def _model_info_to_list(info: ModelInfo) -> dict:
         "thresholds": list(info.thresholds),
         "max_length": info.max_length,
         "explanation_steps": info.explanation_steps,
+        "inference_backend": info.inference_backend,
     }
 
 def _status_to_list(status: RuntimeStatus):

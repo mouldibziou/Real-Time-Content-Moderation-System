@@ -91,3 +91,54 @@ class ToxicityExplainerTests(TestCase):
         for explanation in explanations:
             self.assertEqual(explanation.label, "first")
             self.assertEqual([span.text for span in explanation.spans], ["unacceptable"])
+
+
+class DistilBertStyleSequenceClassifier(torch.nn.Module):
+    """Mimics DistilBERT: forward() has no token_type_ids parameter."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.embedding = torch.nn.Embedding(103, 2)
+        with torch.no_grad():
+            self.embedding.weight.zero_()
+            self.embedding.weight[5] = torch.tensor([2.0, -1.0])
+            self.embedding.weight[6] = torch.tensor([-3.0, 4.0])
+
+    def get_input_embeddings(self) -> torch.nn.Embedding:
+        return self.embedding
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> SimpleNamespace:
+        embeddings = self.embedding(input_ids)
+        pooled = (embeddings * attention_mask.unsqueeze(-1)).sum(dim=1)
+        return SimpleNamespace(logits=pooled)
+
+
+class TokenTypeIdsCompatibilityTests(TestCase):
+    def test_models_without_token_type_ids_support_still_explain(self) -> None:
+        explainer = ToxicityExplainer(
+            model=DistilBertStyleSequenceClassifier(),
+            tokenizer=FakeTokenizer(),  # emits token_type_ids like the saved tokenizer
+            labels=("first", "second"),
+            device=torch.device("cpu"),
+            max_length=8,
+            n_steps=8,
+        )
+        self.assertFalse(explainer._supports_token_type_ids)
+        explanation = explainer.explain("unacceptable", "first")
+        self.assertEqual([span.text for span in explanation.spans], ["unacceptable"])
+        self.assertAlmostEqual(explanation.spans[0].score, -1.0, places=5)
+
+    def test_models_with_token_type_ids_support_keep_receiving_them(self) -> None:
+        explainer = ToxicityExplainer(
+            model=FakeSequenceClassifier(),
+            tokenizer=FakeTokenizer(),
+            labels=("first", "second"),
+            device=torch.device("cpu"),
+            max_length=8,
+            n_steps=8,
+        )
+        self.assertTrue(explainer._supports_token_type_ids)

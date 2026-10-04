@@ -14,3 +14,5 @@ asyncpg
 alembic
 psycopg2-binary
 python-dotenv
+onnxruntime
+optimum[onnxruntime]

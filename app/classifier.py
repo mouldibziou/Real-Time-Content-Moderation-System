@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from dataclasses import dataclass
 
@@ -38,13 +39,19 @@ class ToxicityClassifier:
     def predict(self, text:str) -> ClassificationResult:
         """Classifies a unique input sequence"""
 
-        tokenized_text = self.tokenizer(
+        encoded = self.tokenizer(
             text,
             return_tensors="pt",
             truncation=True,
             padding=True,
             max_length=self.max_length
-        ).to(self.device)
+        )
+        # NOTE: the saved tokenizer returns token_type_ids, which DistilBERT
+        # does not accept. Only forward the inputs the model supports.
+        tokenized_text = {
+            "input_ids": encoded["input_ids"].to(self.device),
+            "attention_mask": encoded["attention_mask"].to(self.device),
+        }
 
         with torch.inference_mode():
             outputs = self.model(**tokenized_text)
@@ -78,7 +85,12 @@ class ToxicityClassifier:
             truncation=True,
             padding=True,
             max_length=self.max_length
-        ).to(self.device)
+        )
+        # NOTE: see predict(): drop token_type_ids for DistilBERT compatibility.
+        tokenized_texts = {
+            "input_ids": tokenized_texts["input_ids"].to(self.device),
+            "attention_mask": tokenized_texts["attention_mask"].to(self.device),
+        }
 
         with torch.inference_mode():
             outputs = self.model(**tokenized_texts)
@@ -106,3 +118,75 @@ class ToxicityClassifier:
         ]
 
         return results
+
+class ToxicityOnnxClassifier:
+    """
+    ONNX Runtime counterpart of ToxicityClassifier.
+
+    Same predict/predict_batch interface and ClassificationResult output,
+    but inference runs through an onnxruntime InferenceSession instead of
+    torch. The torch model is still required elsewhere for explanations,
+    which need gradients that ONNX cannot provide.
+    """
+    def __init__(
+            self,
+            session,
+            tokenizer,
+            thresholds,
+            labels,
+            max_length
+    ):
+        self.session = session
+        self.labels = labels
+        self.max_length = max_length
+
+        self.tokenizer = tokenizer
+        self.thresholds = np.asarray(thresholds, dtype=np.float64).reshape(1, -1)
+
+    def _logits(self, texts:list[str]) -> np.ndarray:
+        encoded = self.tokenizer(
+            texts,
+            return_tensors="np",
+            truncation=True,
+            padding=True,
+            max_length=self.max_length
+        )
+        feed = {
+            "input_ids": np.asarray(encoded["input_ids"], dtype=np.int64),
+            "attention_mask": np.asarray(encoded["attention_mask"], dtype=np.int64),
+        }
+        return np.asarray(self.session.run(None, feed)[0], dtype=np.float64)
+
+    @staticmethod
+    def _to_results(texts:list[str], labels, probs:np.ndarray, predictions:np.ndarray) -> list[ClassificationResult]:
+        return [
+            ClassificationResult(
+                labels={
+                    label: LabelPrediction(
+                        probability=float(probability),
+                        predicted=bool(predicted),
+                    )
+                    for label, probability, predicted in zip(
+                        labels,
+                        probability_row,
+                        prediction_row,
+                    )
+                }
+            )
+            for probability_row, prediction_row in zip(probs.tolist(), predictions.tolist())
+        ]
+
+    def predict(self, text:str) -> ClassificationResult:
+        """Classifies a unique input sequence"""
+        logits = self._logits([text])
+        probs = 1.0 / (1.0 + np.exp(-logits))
+        predictions = probs >= self.thresholds
+        return self._to_results([text], self.labels, probs, predictions)[0]
+
+    def predict_batch(self, texts:list[str]) -> list[ClassificationResult]:
+        """Classifies a batch of input sequences,
+        returns the multi-label result as a list of dictionaries"""
+        logits = self._logits(list(texts))
+        probs = 1.0 / (1.0 + np.exp(-logits))
+        predictions = probs >= self.thresholds
+        return self._to_results(list(texts), self.labels, probs, predictions)
