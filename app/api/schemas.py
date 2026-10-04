@@ -39,11 +39,10 @@ class BatchClassifyRequest(BaseModel):
     )
 
 class ExplainRequest(BaseModel):
-    model_config = {"extra": "forbid", "str_strip_whitespace": True}
+    model_config = {"extra": "forbid"}
 
-    text: CommentText = Field(
-        description="Single comment to explain",
-        examples=["You are an idiot"],
+    classification_id: UUID = Field(
+        description="Prior classification to explain (strict: must exist)",
     )
 
     label: ToxicLabel = Field(
@@ -52,12 +51,11 @@ class ExplainRequest(BaseModel):
     )
 
 class BatchExplainRequest(BaseModel):
-    model_config = {"extra": "forbid", "str_strip_whitespace": True}
+    model_config = {"extra": "forbid"}
 
-    texts: list[CommentText] = Field(
+    classification_ids: list[UUID] = Field(
         min_length=1,
-        description="Batch of comments to explain for a shared label",
-        examples=[["You are an idiot", "This comment is helpful"]],
+        description="Prior classifications to explain for a shared label",
     )
 
     label: ToxicLabel = Field(

@@ -3,7 +3,7 @@ from hashlib import sha256
 from logging import getLogger
 from typing import Annotated
 from uuid import uuid4, UUID
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.params import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,8 +25,15 @@ from app.api.dependencies import (
     get_executor,
     _call_runtime
 )
-from app.db.engine import async_session
-from app.db.repository import save_classification, save_classifications_batch
+from app.db.engine import async_session, get_db
+from app.db.repository import (
+    find_explanation,
+    get_classification,
+    save_classification,
+    save_classifications_batch,
+    save_explanation,
+    save_explanations_batch,
+)
 from app.metadata import ModelInfo
 from app.runtime import ApplicationRuntime, RuntimeStatus
 
@@ -190,14 +197,54 @@ async def _persist_classifications_batch(*, items: list[dict]):
 
 @router.post("/explain", response_model=ExplainResponse)
 async def explain_text(
+    background_tasks: BackgroundTasks,
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
     executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
+    db: Annotated[AsyncSession, Depends(get_db)],
     payload: ExplainRequest
 ):
-    text = payload.text
+    classification_id = payload.classification_id
     label = payload.label
+    model_version = "v2.0.0"
+
+    # Strict: must have been classified before. Reuse exact stored text.
+    classification = await get_classification(db, classification_id=classification_id)
+    if classification is None:
+        raise HTTPException(status_code=404, detail="classification not found")
+    text = classification.text
+
+    # Cache before GPU: same (id, label, version) returns stored spans.
+    cached = await find_explanation(
+        db, classification_id=classification_id, label=label, model_version=model_version
+    )
+    if cached is not None:
+        return {
+            "text": text,
+            "label": cached.label,
+            "spans": cached.spans,
+            "convergence_delta": cached.convergence_delta,
+        }
 
     result = await _call_runtime(runtime.explain, executor, text, label)
+    spans_plain = [
+        {
+            "text": s.text,
+            "start": s.start,
+            "end": s.end,
+            "score": s.score,
+            "normalized_importance": s.normalized_importance,
+        }
+        for s in result.spans
+    ]
+    background_tasks.add_task(
+        _persist_explanation,
+        id=uuid4(),
+        classification_id=classification_id,
+        label=result.label,
+        spans=spans_plain,
+        convergence_delta=result.convergence_delta,
+        model_version=model_version,
+    )
     return {
         "text": text,
         "label": result.label,
@@ -205,22 +252,113 @@ async def explain_text(
         "convergence_delta": result.convergence_delta
     }
 
+async def _persist_explanation(
+    *,
+    id: UUID,
+    classification_id: UUID,
+    label: str,
+    spans: list,
+    convergence_delta: float | None,
+    model_version: str,
+):
+    # Own fresh session: foreground session closes before background runs.
+    try:
+        async with async_session() as session:
+            await save_explanation(
+                session,
+                id=id,
+                classification_id=classification_id,
+                label=label,
+                spans=spans,
+                convergence_delta=convergence_delta,
+                model_version=model_version,
+            )
+    except Exception:
+        logger.exception("background persist failed for explanation %s", id)
+
 @router.post("/explain_batch", response_model=ExplainBatchResponse)
 async def explain_batch(
+    background_tasks: BackgroundTasks,
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
     executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
+    db: Annotated[AsyncSession, Depends(get_db)],
     payload: BatchExplainRequest
 ):
-    texts = payload.texts
+    ids = payload.classification_ids
     label = payload.label
+    model_version = "v2.0.0"
 
-    results = await _call_runtime(runtime.explain_batch, executor, texts, label)
-    return {
-        "results": [
-            {"text": text, "label": r.label, "spans": list(r.spans), "convergence_delta": r.convergence_delta}
-            for text, r in zip(texts, results)
-        ]
-    }
+    # Strict: load all rows first, 404 on first missing to keep order exact.
+    texts: list[str] = []
+    for cid in ids:
+        row = await get_classification(db, classification_id=cid)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"classification {cid} not found")
+        texts.append(row.text)
+
+    # Cache per id; collect misses for one pooled batch call.
+    cached_by_idx: dict[int, object] = {}
+    miss_idx: list[int] = []
+    miss_texts: list[str] = []
+    for i, cid in enumerate(ids):
+        hit = await find_explanation(
+            db, classification_id=cid, label=label, model_version=model_version
+        )
+        if hit is not None:
+            cached_by_idx[i] = hit
+        else:
+            miss_idx.append(i)
+            miss_texts.append(texts[i])
+
+    fresh_by_idx: dict[int, object] = {}
+    if miss_texts:
+        fresh = await _call_runtime(runtime.explain_batch, executor, miss_texts, label)
+        for i, r in zip(miss_idx, fresh):
+            fresh_by_idx[i] = r
+        background_tasks.add_task(
+            _persist_explanations_batch,
+            items=[
+                {
+                    "id": uuid4(),
+                    "classification_id": ids[i],
+                    "label": r.label,
+                    "spans": [
+                        {
+                            "text": s.text,
+                            "start": s.start,
+                            "end": s.end,
+                            "score": s.score,
+                            "normalized_importance": s.normalized_importance,
+                        }
+                        for s in r.spans
+                    ],
+                    "convergence_delta": r.convergence_delta,
+                    "model_version": model_version,
+                }
+                for i, r in zip(miss_idx, fresh)
+            ],
+        )
+
+    ordered = []
+    for i, cid in enumerate(ids):
+        if i in cached_by_idx:
+            c = cached_by_idx[i]
+            ordered.append(
+                {"text": texts[i], "label": c.label, "spans": c.spans, "convergence_delta": c.convergence_delta}
+            )
+        else:
+            r = fresh_by_idx[i]
+            ordered.append(
+                {"text": texts[i], "label": r.label, "spans": list(r.spans), "convergence_delta": r.convergence_delta}
+            )
+    return {"results": ordered}
+
+async def _persist_explanations_batch(*, items: list[dict]):
+    try:
+        async with async_session() as session:
+            await save_explanations_batch(session, items=items)
+    except Exception:
+        logger.exception("background persist failed for %d explanations", len(items))
 
 def _model_info_to_list(info: ModelInfo) -> dict:
     return {
