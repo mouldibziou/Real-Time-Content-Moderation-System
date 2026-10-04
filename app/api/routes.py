@@ -1,8 +1,11 @@
 from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha256
+from logging import getLogger
 from typing import Annotated
-from uuid import uuid4
-from fastapi import APIRouter
+from uuid import uuid4, UUID
+from fastapi import APIRouter, BackgroundTasks
 from fastapi.params import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import(
     BatchClassifyRequest,
@@ -22,8 +25,12 @@ from app.api.dependencies import (
     get_executor,
     _call_runtime
 )
+from app.db.engine import async_session
+from app.db.repository import save_classification, save_classifications_batch
 from app.metadata import ModelInfo
 from app.runtime import ApplicationRuntime, RuntimeStatus
+
+logger = getLogger(__name__)
 
 # All routes in this api will automatically start with /v1
 router = APIRouter(prefix="/v1")
@@ -60,11 +67,15 @@ async def get_readiness(
 async def health_check() -> dict[str, str]:
     return {"status": "healthy"}
 
+# NOTE: not including a db health check because persistence operations are not public
+# and a down db must not pull traffic out.
+
 # NOTE: we await _call_runtime because it is an async function as it 
 # declared in dependencies.py, because we want to call runtime functions
 # asynchronously, even they are synchronized by default.
 @router.post("/classify", response_model=ClassifyResponse)
 async def classify_text(
+    background_tasks: BackgroundTasks,
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
     executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
     payload: ClassifyRequest
@@ -77,26 +88,105 @@ async def classify_text(
     text = payload.text
     result = await _call_runtime(runtime.predict, executor, text) # NOTE: Next time figure this out BETTER
     classification_id = uuid4()
+
+    # Snapshot plain data for background: no ORM objects cross threads.
+    info = runtime.model_info()
+    labels_plain = {
+        label: {"probability": pred.probability, "predicted": pred.predicted}
+        for label, pred in result.labels.items()
+    }
+    background_tasks.add_task(
+        _persist_classification,
+        id=classification_id,
+        text=text,
+        text_hash=sha256(text.encode("utf-8")).hexdigest(),
+        model_version="v2.0.0",
+        model_type=info.model_type,
+        device=info.device,
+        thresholds=list(info.thresholds),
+        labels=labels_plain,
+    )
+
     return {
         "text": text,
         "labels": result.labels,
         "classification_id": classification_id
     }
 
+async def _persist_classification(
+        *,
+        id: UUID,
+        text: str,
+        text_hash: str,
+        model_version: str,
+        model_type: str,
+        device: str,
+        thresholds: list,
+        labels: dict,
+):
+    # Own fresh session: request session would close before background runs.
+    # Failure here only logs; response already returned (accepted loss window).
+    # NOTE: logger kept intentionally minimal here. Full structured logging
+    # is a separate project task; this exception line is mandatory so
+    # background loss is never silent.
+    try:
+        async with async_session() as session:
+            await save_classification(
+                session,
+                id=id,
+                text=text,
+                text_hash=text_hash,
+                model_version=model_version,
+                model_type=model_type,
+                device=device,
+                thresholds=thresholds,
+                labels=labels,
+            )
+    except Exception:
+        logger.exception("background persist failed for classification %s", id)
+
 @router.post("/classify_batch", response_model=ClassifyBatchResponse)
 async def classify_batch(
+    background_tasks: BackgroundTasks,
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
     executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
     payload: BatchClassifyRequest
 ):
     texts = payload.texts
     results = await _call_runtime(runtime.predict_batch, executor, texts)
+    info = runtime.model_info()
+    ids = [uuid4() for _ in texts]
+    items = [
+        {
+            "id": cid,
+            "text": text,
+            "text_hash": sha256(text.encode("utf-8")).hexdigest(),
+            "model_version": "v2.0.0",
+            "model_type": info.model_type,
+            "device": info.device,
+            "thresholds": list(info.thresholds),
+            "labels": {
+                label: {"probability": pred.probability, "predicted": pred.predicted}
+                for label, pred in r.labels.items()
+            },
+        }
+        for cid, text, r in zip(ids, texts, results)
+    ]
+    background_tasks.add_task(_persist_classifications_batch, items=items)
     return {
         "results": [
-            {"text": text, "labels": r.labels, "classification_id": uuid4()}
-            for text, r in zip(texts, results)
+            {"text": text, "labels": r.labels, "classification_id": cid}
+            for text, r, cid in zip(texts, results, ids)
         ]
     }
+
+async def _persist_classifications_batch(*, items: list[dict]):
+    # Same return-first contract as single: own session, log-only on failure.
+    try:
+        async with async_session() as session:
+            await save_classifications_batch(session, items=items)
+    except Exception:
+        logger.exception("background persist failed for %d classifications", len(items))
 
 @router.post("/explain", response_model=ExplainResponse)
 async def explain_text(

@@ -1,9 +1,11 @@
 from typing import Callable
+from logging import getLogger
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from sqlalchemy import text
 
 from app.runtime import ApplicationRuntime
 from app.services import ApplicationServices, build_services
@@ -23,6 +25,8 @@ def create_app(
             [RuntimeSettings], ApplicationServices
         ] = build_services
 ) -> FastAPI:
+    logger = getLogger(__name__)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         runtime = ApplicationRuntime(
@@ -40,6 +44,15 @@ def create_app(
         app.state.runtime = runtime
         app.state.runtime_executor = runtime_executor
         app.state.engine = engine
+
+        # Soft DB check: log-only, never block boot. Return-first serves
+        # 200s while Postgres blips; background persists retry/log.
+        try:
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+            logger.info("database connectivity check passed")
+        except Exception:
+            logger.warning("database unavailable at startup, serving without persistence", exc_info=True)
 
         try:
             yield
