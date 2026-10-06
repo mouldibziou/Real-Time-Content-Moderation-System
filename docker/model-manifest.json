@@ -1,0 +1,30 @@
+{
+  "release": "distilbert/v2.0.0",
+  "files": [
+    {
+      "path": "models/distilbert/v2.0.0/model.safetensors",
+      "size_bytes": 267844872,
+      "sha256": "a052683635ad12c007b806d9c6f4527447523448e03039b5b2be370e997bc213"
+    },
+    {
+      "path": "models/distilbert/v2.0.0/config.json",
+      "size_bytes": 944,
+      "sha256": "5dd9eb4b9feed5d8379646e6ce7f22a8ed2e99c03d06399de9cbc195ef3ca408"
+    },
+    {
+      "path": "models/distilbert/v2.0.0/tokenizer.json",
+      "size_bytes": 711494,
+      "sha256": "fe50531e4e6e0a7510f68052357c2326f7b311757b173bc68969a37325223b4e"
+    },
+    {
+      "path": "models/distilbert/v2.0.0/tokenizer_config.json",
+      "size_bytes": 321,
+      "sha256": "18fdfd0d1a40a00df1481de65f94ed6d9c1e1af08f7582520db12e1656d9b628"
+    },
+    {
+      "path": "models/distilbert/v2.0.0-onnx/model.onnx",
+      "size_bytes": 267944478,
+      "sha256": "9adb75e68b371c1d735b3c47ae2c1c2cd7bda452a69a4f148b1cc257c4c219fe"
+    }
+  ]
+}

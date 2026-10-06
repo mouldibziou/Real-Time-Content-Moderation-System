@@ -1,0 +1,15 @@
+# Direct requirements for CPython 3.12, Linux amd64, CPU serving.
+# Start with versions exercised by the existing application; generated locks
+# also pin and hash every transitive dependency.
+-c constraints.in
+numpy==2.4.4
+torch==2.11.0+cpu
+transformers==4.57.6
+captum==0.9.0
+onnxruntime==1.30.0
+fastapi==0.141.1
+pydantic==2.13.5
+uvicorn==0.53.0
+sqlalchemy[asyncio]==2.1.2
+asyncpg==0.31.0
+python-dotenv==1.2.2

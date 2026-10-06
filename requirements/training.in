@@ -1,0 +1,10 @@
+# Existing baseline and transformer training scripts; CPU target only.
+-c constraints.in
+numpy==2.4.4
+torch==2.11.0+cpu
+transformers==4.57.6
+pandas==3.0.2
+scikit-learn==1.8.0
+joblib==1.5.3
+datasets==4.8.4
+accelerate==1.13.0

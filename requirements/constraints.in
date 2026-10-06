@@ -1,0 +1,4 @@
+# Existing datasets 4.8.4 requires fsspec <=2026.2.0. Keep shared environments
+# compatible using the version already installed in the application's venv.
+# A constraint limits an existing dependency; it does not install it by itself.
+fsspec==2026.2.0

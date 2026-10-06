@@ -1,0 +1,7 @@
+# ONNX export tooling is not installed in the serving environment.
+-c constraints.in
+numpy==2.4.4
+torch==2.11.0+cpu
+transformers==4.57.6
+onnxruntime==1.30.0
+optimum[onnxruntime]==2.1.0

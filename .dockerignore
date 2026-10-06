@@ -1,0 +1,34 @@
+# Allow only build inputs; Git ignores do not control Docker's build context.
+**
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!requirements/
+!requirements/migrations.txt
+!app/
+!app/**
+!alembic.ini
+!alembic/
+!alembic/**
+!docker/
+!docker/healthcheck.py
+!docker/verify_artifacts.py
+!docker/model-manifest.json
+!docker/logging.json
+!models/
+!models/distilbert/
+!models/distilbert/v2.0.0/
+!models/distilbert/v2.0.0/model.safetensors
+!models/distilbert/v2.0.0/config.json
+!models/distilbert/v2.0.0/tokenizer.json
+!models/distilbert/v2.0.0/tokenizer_config.json
+!models/distilbert/v2.0.0-onnx/
+!models/distilbert/v2.0.0-onnx/model.onnx
+
+# Remove incidental files even within allowed directories.
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.DS_Store
+**/.env*
+app/api/_main.py
