@@ -1,10 +1,14 @@
 from datetime import datetime
+from logging import getLogger
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Classification, CorrectionEvent, Explanation
+
+logger = getLogger(__name__)
 
 async def save_classification(
         session: AsyncSession,
@@ -22,6 +26,8 @@ async def save_classification(
 
     Use case: POST /v1/classify return-first path. Handler generates id
     upfront, returns {id, text, labels}, then background task calls this.
+    Duplicates on (text_hash, model_version) are benign repeats: roll back
+    and keep the earliest row instead of raising.
     """
     # Keyword construction only; server owns created_at via now().
     new_classification = Classification(
@@ -36,7 +42,15 @@ async def save_classification(
     )
     session.add(new_classification)
     # without await we return a coroutine and nothing persists.
-    await session.commit() 
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        logger.info(
+            "duplicate classification ignored for hash %s model %s",
+            text_hash,
+            model_version,
+        ) 
 
 async def get_classification(
         session: AsyncSession,
@@ -60,10 +74,12 @@ async def save_classifications_batch(
     """Persist one classify_batch result set in a single transaction.
 
     Use case: POST /v1/classify_batch return-first path. Ids pre-generated
-    so the response returns before this background commit.
+    so the response returns before this background commit. Duplicate
+    (hash, version) rows are skipped per item so one repeat never fails
+    the whole batch.
     """
-    session.add_all(
-        [
+    for item in items:
+        session.add(
             Classification(
                 id=item["id"],
                 text=item["text"],
@@ -74,9 +90,16 @@ async def save_classifications_batch(
                 thresholds=item["thresholds"],
                 labels=item["labels"],
             )
-            for item in items
-        ]
-    )
+        )
+        try:
+            await session.flush()
+        except IntegrityError:
+            await session.rollback()
+            logger.info(
+                "duplicate classification ignored for hash %s",
+                item["text_hash"],
+            )
+            continue
     await session.commit()
 
 
@@ -115,7 +138,8 @@ async def save_explanation(
     """Persist one explain miss after the response returned.
 
     Use case: POST /v1/explain cache-miss path, background write so
-    repeat requests become cache hits.
+    repeat requests become cache hits. Concurrent misses for the same
+    triple are benign: keep the first winner, ignore the loser.
     """
     session.add(
         Explanation(
@@ -127,7 +151,16 @@ async def save_explanation(
             model_version=model_version,
         )
     )
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        logger.info(
+            "duplicate explanation ignored for %s %s %s",
+            classification_id,
+            label,
+            model_version,
+        )
 
 
 async def save_explanations_batch(
@@ -138,10 +171,11 @@ async def save_explanations_batch(
     """Persist one explain_batch miss set in a single transaction.
 
     Use case: POST /v1/explain_batch return-first path. Future multi-label
-    is N rows here with no schema change.
+    is N rows here with no schema change. Per-triple duplicates are
+    skipped so one race never fails the batch.
     """
-    session.add_all(
-        [
+    for item in items:
+        session.add(
             Explanation(
                 id=item["id"],
                 classification_id=item["classification_id"],
@@ -150,9 +184,17 @@ async def save_explanations_batch(
                 convergence_delta=item.get("convergence_delta"),
                 model_version=item["model_version"],
             )
-            for item in items
-        ]
-    )
+        )
+        try:
+            await session.flush()
+        except IntegrityError:
+            await session.rollback()
+            logger.info(
+                "duplicate explanation ignored for %s %s",
+                item["classification_id"],
+                item["label"],
+            )
+            continue
     await session.commit()
 
 
