@@ -9,7 +9,7 @@ from sqlalchemy import text
 
 from app.runtime import ApplicationRuntime
 from app.services import ApplicationServices, build_services
-from app.settings import RuntimeSettings
+from app.settings import RuntimeSettings, load_runtime_settings
 from app.api.routes import router
 from app.errors import (
     RuntimeNotReadyError,
@@ -97,8 +97,7 @@ def create_app(
 
     return app
 
-settings = RuntimeSettings()
+settings = load_runtime_settings()
 
-# main:app (module-level function) is needed by uvicorn to start the ASGI server
-# to start the server run "uvicorn main:app"
+# Uvicorn imports this application once per worker: app.api.main:app.
 app = create_app(settings)

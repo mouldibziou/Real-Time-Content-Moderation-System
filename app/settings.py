@@ -1,6 +1,9 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from math import isfinite
+import os
 from pathlib import Path
+import re
 
 @dataclass(frozen=True)
 class RuntimeSettings:
@@ -8,7 +11,7 @@ class RuntimeSettings:
     model_dir: Path = Path("models/distilbert/v2.0.0")
     labels: tuple[str, ...] = ('toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate')
     thresholds: tuple[float, ...] = (0.74, 0.45, 0.74, 0.59, 0.61, 0.76)
-    device: str = "mps"
+    device: str = "cpu"
     n_steps: int = 32
     max_text_chars: int = 10_000
     inference_backend: str = "onnx"
@@ -36,6 +39,12 @@ class RuntimeSettings:
     max_explanation_batch_size: int = 8
 
     def __post_init__(self) -> None:
+        if not isinstance(self.device, str):
+            raise TypeError("Device must be a string")
+        if re.fullmatch(r"cpu|mps|cuda(?::[0-9]+)?", self.device) is None:
+            raise ValueError("Device must be 'cpu', 'mps', 'cuda', or 'cuda:<index>'")
+        if not isinstance(self.model_dir, Path):
+            raise TypeError("Model directory must be a pathlib.Path")
         if not isinstance(self.max_length, int) or type(self.max_length) is bool:
             raise TypeError("Maximum tokens length must be an integer")
         if self.max_length < 1:
@@ -92,3 +101,26 @@ class RuntimeSettings:
             raise ValueError("ONNX providers must be a nonempty tuple or list")
         if any(not isinstance(provider, str) or not provider.strip() for provider in self.onnx_providers):
             raise ValueError("ONNX providers must be nonempty strings")
+
+
+def load_runtime_settings(environ: Mapping[str, str] | None = None) -> RuntimeSettings:
+    """Read deployment overrides once, without loading resources or probing devices.
+
+    Missing variables use RuntimeSettings defaults. Explicitly blank values are
+    errors. Relative model paths remain relative to the process working directory.
+    DATABASE_URL remains the responsibility of the database configuration.
+    """
+    environment = dict(os.environ if environ is None else environ)
+    overrides = {}
+    for variable, field, convert in (
+        ("TOXICITY_DEVICE", "device", str),
+        ("TOXICITY_INFERENCE_BACKEND", "inference_backend", str),
+        ("TOXICITY_MODEL_DIR", "model_dir", Path),
+        ("TOXICITY_ONNX_MODEL_DIR", "onnx_model_dir", Path),
+    ):
+        if variable in environment:
+            value = environment[variable]
+            if not value.strip():
+                raise ValueError(f"{variable} must not be empty or whitespace-only")
+            overrides[field] = convert(value)
+    return RuntimeSettings(**overrides)
