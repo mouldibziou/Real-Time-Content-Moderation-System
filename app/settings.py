@@ -25,18 +25,18 @@ class RuntimeSettings:
     2. How much optional explanation traffic are you willing to hold?
     3. How long can an explanation wait during sustained classification traffic?
     """
-    max_waiting_classifications: int = 8 # maximum number of classification calls allowed to wait in the classification queue
-    max_waiting_explanations: int = 2 # check right above
-    classification_burst_limit: int = 5 # when both queues contain work, the maximum number of consecutive classification operations served before the scheduler must serve one explanation
+    max_waiting_classifications: int = 32 # maximum number of classification calls allowed to wait in the classification queue
+    max_waiting_explanations: int = 1 # check right above
+    classification_burst_limit: int = 20 # when both queues contain work, the maximum number of consecutive classification operations served before the scheduler must serve one explanation
     """
     NOTE: operation wait timeout in seconds, 
     max prediction ,and explanation batch sizes
     are provisional limits for deployment,
     these will be tuned later after real-world measurements.
     """
-    operation_wait_timeout_seconds: float = 30.0 # NOTE: operation timeout should not heavily exceed the final expected latency (p99, p95)
+    operation_wait_timeout_seconds: float = 5.0 # NOTE: operation timeout should not heavily exceed the final expected latency (p99, p95)
     max_prediction_batch_size: int = 64
-    max_explanation_batch_size: int = 8
+    max_explanation_batch_size: int = 4
 
     def __post_init__(self) -> None:
         if not isinstance(self.device, str):
