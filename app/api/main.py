@@ -2,6 +2,7 @@ from typing import Callable
 from logging import getLogger
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -44,6 +45,15 @@ def create_app(
         app.state.runtime = runtime
         app.state.runtime_executor = runtime_executor
         app.state.engine = engine
+        # Immutable snapshot: model info never changes per boot, so request
+        # handlers read this dict instead of locking the runtime per call.
+        # Saves one Condition acquire on every classify under load.
+        info = runtime.model_info()
+        app.state.model_snapshot = {
+            "model_type": info.model_type,
+            "device": info.device,
+            "thresholds": list(info.thresholds),
+        }
 
         # Soft DB check: log-only, never block boot. Return-first serves
         # 200s while Postgres blips; background persists retry/log.
@@ -64,8 +74,11 @@ def create_app(
     app = FastAPI(
         title="Toxicity Classification API",
         version="1.0.0",
-        lifespan=lifespan
+        lifespan=lifespan,
+        # GZip cuts spans/list bodies on the wire for clients sending
+        # Accept-Encoding: gzip.
     )
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
 
     # Centralized domain -> HTTP mapping. Routes let these bubble;
     # handlers translate to retryable vs client-error signals.

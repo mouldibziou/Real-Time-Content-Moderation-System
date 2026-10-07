@@ -31,6 +31,16 @@ def get_executor(request: Request) -> ThreadPoolExecutor:
         raise RuntimeNotReadyError("Application runtime is not ready")
     return executor
 
+
+def get_model_snapshot(request: Request) -> dict:
+    # Immutable per boot, published by lifespan. No lock, no 503: if the
+    # model loaded, the snapshot exists; background writes degrade to
+    # logged-only when the DB is down, never to missing metadata.
+    snapshot = getattr(request.app.state, "model_snapshot", None)
+    if snapshot is None:
+        raise RuntimeNotReadyError("Application runtime is not ready")
+    return snapshot
+
 async def _call_runtime(
         func,
         executor: ThreadPoolExecutor,

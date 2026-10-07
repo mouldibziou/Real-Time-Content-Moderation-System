@@ -27,6 +27,7 @@ from app.api.schemas import(
     StatusResponse
 )
 from app.api.dependencies import (
+    get_model_snapshot,
     get_runtime,
     get_executor,
     _call_runtime
@@ -118,6 +119,7 @@ async def classify_text(
     background_tasks: BackgroundTasks,
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
     executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
+    snapshot: Annotated[dict, Depends(get_model_snapshot)],
     payload: ClassifyRequest
 ):
     """
@@ -130,7 +132,7 @@ async def classify_text(
     classification_id = uuid4()
 
     # Snapshot plain data for background: no ORM objects cross threads.
-    info = runtime.model_info()
+    # Model metadata comes lock-free from lifespan state, not per-call.
     labels_plain = {
         label: {"probability": pred.probability, "predicted": pred.predicted}
         for label, pred in result.labels.items()
@@ -141,9 +143,9 @@ async def classify_text(
         text=text,
         text_hash=sha256(text.encode("utf-8")).hexdigest(),
         model_version="v2.0.0",
-        model_type=info.model_type,
-        device=info.device,
-        thresholds=list(info.thresholds),
+        model_type=snapshot["model_type"],
+        device=snapshot["device"],
+        thresholds=snapshot["thresholds"],
         labels=labels_plain,
     )
 
@@ -195,11 +197,11 @@ async def classify_batch(
     background_tasks: BackgroundTasks,
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
     executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
+    snapshot: Annotated[dict, Depends(get_model_snapshot)],
     payload: BatchClassifyRequest
 ):
     texts = payload.texts
     results = await _call_runtime(runtime.predict_batch, executor, texts)
-    info = runtime.model_info()
     ids = [uuid4() for _ in texts]
     items = [
         {
@@ -207,9 +209,9 @@ async def classify_batch(
             "text": text,
             "text_hash": sha256(text.encode("utf-8")).hexdigest(),
             "model_version": "v2.0.0",
-            "model_type": info.model_type,
-            "device": info.device,
-            "thresholds": list(info.thresholds),
+            "model_type": snapshot["model_type"],
+            "device": snapshot["device"],
+            "thresholds": snapshot["thresholds"],
             "labels": {
                 label: {"probability": pred.probability, "predicted": pred.predicted}
                 for label, pred in r.labels.items()
