@@ -58,3 +58,22 @@ class Explanation(Base):
         UniqueConstraint("classification_id", "label", "model_version", name="uq_expl_cache"),
         Index("ix_expl_class", "classification_id"),
     )
+
+
+class ExplanationJob(Base):
+    __tablename__ = "explanation_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    classification_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("classifications.id", ondelete="CASCADE"), nullable=False)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    model_version: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, server_default="queued")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[object] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[object] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("classification_id", "label", "model_version", name="uq_expl_job_cache"),
+        Index("ix_expl_job_status", "status"),
+        Index("ix_expl_job_class", "classification_id"),
+    )
