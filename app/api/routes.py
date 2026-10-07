@@ -42,8 +42,6 @@ from app.db.repository import (
     list_latest_corrections,
     save_classification,
     save_classifications_batch,
-    save_explanation,
-    save_explanations_batch,
 )
 from app.metadata import ModelInfo
 from app.runtime import ApplicationRuntime, RuntimeStatus
@@ -246,8 +244,6 @@ async def _persist_classifications_batch(*, items: list[dict]):
     description="Strict: requires a prior classification_id (404 if unknown). Cache hit returns 200 spans with zero GPU; miss creates a job, pushes to Redis, returns 202 with job_id. Poll GET /v1/jobs/{job_id}. Example: {\"classification_id\": \"<uuid from /classify>\", \"label\": \"toxic\"}.",
 )
 async def explain_text(
-    runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
-    executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
     db: Annotated[AsyncSession, Depends(get_db)],
     payload: ExplainRequest
 ):
@@ -368,30 +364,6 @@ async def get_explain_job(
         "updated_at": job.updated_at,
         "result": result,
     }
-
-async def _persist_explanation(
-    *,
-    id: UUID,
-    classification_id: UUID,
-    label: str,
-    spans: list,
-    convergence_delta: float | None,
-    model_version: str,
-):
-    # Own fresh session: foreground session closes before background runs.
-    try:
-        async with async_session() as session:
-            await save_explanation(
-                session,
-                id=id,
-                classification_id=classification_id,
-                label=label,
-                spans=spans,
-                convergence_delta=convergence_delta,
-                model_version=model_version,
-            )
-    except Exception:
-        logger.exception("background persist failed for explanation %s", id)
 
 @router.post(
     "/explain_batch",
