@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Classification, CorrectionEvent, Explanation
+from app.db.models import Classification, CorrectionEvent, Explanation, ExplanationJob
 
 logger = getLogger(__name__)
 
@@ -315,3 +315,94 @@ async def list_explanations(
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+async def get_job(
+    session: AsyncSession,
+    *,
+    job_id: UUID,
+):
+    """Fetch one job by PK for status polling.
+
+    Use case: GET /v1/jobs/{id}. Returns row or None (route 404s).
+    """
+    return await session.get(ExplanationJob, job_id)
+
+
+async def find_job(
+    session: AsyncSession,
+    *,
+    classification_id: UUID,
+    label: str,
+    model_version: str,
+):
+    """Idempotent lookup for repeats: same triple returns existing job.
+
+    Use case: POST /explain creates-or-returns instead of doubling GPU.
+    """
+    stmt = (
+        select(ExplanationJob)
+        .where(ExplanationJob.classification_id == classification_id)
+        .where(ExplanationJob.label == label)
+        .where(ExplanationJob.model_version == model_version)
+    )
+    result = await session.execute(stmt)
+    return result.scalars().first()
+
+
+async def create_job(
+    session: AsyncSession,
+    *,
+    classification_id: UUID,
+    label: str,
+    model_version: str,
+):
+    """Insert a queued job; on unique race return the existing winner.
+
+    Use case: POST /explain miss path. Returns (row, created_bool).
+    """
+    row = ExplanationJob(
+        classification_id=classification_id,
+        label=label,
+        model_version=model_version,
+        status="queued",
+    )
+    session.add(row)
+    try:
+        await session.commit()
+        await session.refresh(row)
+        return row, True
+    except IntegrityError:
+        await session.rollback()
+        existing = await find_job(
+            session,
+            classification_id=classification_id,
+            label=label,
+            model_version=model_version,
+        )
+        assert existing is not None
+        return existing, False
+
+
+async def mark_job(
+    session: AsyncSession,
+    *,
+    job_id: UUID,
+    status: str,
+    error: str | None = None,
+):
+    """Transition running|done|failed with updated_at bump.
+
+    Use case: worker owns transitions; API never calls this.
+    """
+    row = await session.get(ExplanationJob, job_id)
+    if row is None:
+        return None
+    row.status = status
+    row.error = error
+    from datetime import timezone
+
+    row.updated_at = datetime.now(timezone.utc)
+    await session.commit()
+    await session.refresh(row)
+    return row
