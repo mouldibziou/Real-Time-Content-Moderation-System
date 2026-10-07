@@ -88,6 +88,12 @@ class ExplainBatchResponse(BaseModel):
 
     results: list[ExplainResponse]
 
+
+class ExplainBatchJobsResponse(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    jobs: list[ExplainJobResponse]
+
 class StatusResponse(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -113,6 +119,26 @@ class ReadinessResponse(BaseModel):
     model_config = {"extra": "forbid"}
 
     is_ready: bool
+
+
+class ExplainJobResponse(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    job_id: UUID
+    classification_id: UUID
+    label: ToxicLabel
+    model_version: str
+    status: Literal["queued", "running", "done", "failed"]
+    error: str | None = None
+    created_at: object
+    updated_at: object
+
+
+class ExplainJobDetailResponse(ExplainJobResponse):
+    model_config = {"extra": "forbid"}
+
+    # Present only when status == done; spans read from explanations.
+    result: ExplainResponse | None = None
 
 
 class CorrectionRequest(BaseModel):

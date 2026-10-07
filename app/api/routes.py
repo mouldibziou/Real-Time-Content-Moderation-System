@@ -17,7 +17,9 @@ from app.api.schemas import(
     ClassifyResponse,
     CorrectionRequest,
     CorrectionResponse,
-    ExplainBatchResponse,
+    ExplainBatchJobsResponse,
+    ExplainJobDetailResponse,
+    ExplainJobResponse,
     ExplainRequest,
     ExplainResponse,
     ModelInfoResponse,
@@ -235,17 +237,22 @@ async def _persist_classifications_batch(*, items: list[dict]):
 
 @router.post(
     "/explain",
-    response_model=ExplainResponse,
-    summary="Explain one classification",
-    description="Strict: requires a prior classification_id (404 if unknown). Cache hit returns stored spans with zero GPU; miss runs Integrated Gradients then background-saves. Example: {\"classification_id\": \"<uuid from /classify>\", \"label\": \"toxic\"}.",
+    response_model=None,
+    responses={
+        200: {"model": ExplainResponse, "description": "Cache hit, spans without GPU"},
+        202: {"model": ExplainJobResponse, "description": "Accepted, poll GET /jobs/{id}"},
+    },
+    summary="Explain one classification (async on miss)",
+    description="Strict: requires a prior classification_id (404 if unknown). Cache hit returns 200 spans with zero GPU; miss creates a job, pushes to Redis, returns 202 with job_id. Poll GET /v1/jobs/{job_id}. Example: {\"classification_id\": \"<uuid from /classify>\", \"label\": \"toxic\"}.",
 )
 async def explain_text(
-    background_tasks: BackgroundTasks,
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
     executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
     db: Annotated[AsyncSession, Depends(get_db)],
     payload: ExplainRequest
 ):
+    from fastapi.responses import JSONResponse
+
     classification_id = payload.classification_id
     label = payload.label
     model_version = "v2.0.0"
@@ -254,45 +261,112 @@ async def explain_text(
     classification = await get_classification(db, classification_id=classification_id)
     if classification is None:
         raise HTTPException(status_code=404, detail="classification not found")
-    text = classification.text
 
     # Cache before GPU: same (id, label, version) returns stored spans.
     cached = await find_explanation(
         db, classification_id=classification_id, label=label, model_version=model_version
     )
     if cached is not None:
-        return {
-            "text": text,
-            "label": cached.label,
-            "spans": cached.spans,
-            "convergence_delta": cached.convergence_delta,
-        }
+        body = ExplainResponse.model_validate(
+            {
+                "text": classification.text,
+                "label": cached.label,
+                "spans": cached.spans,
+                "convergence_delta": cached.convergence_delta,
+            }
+        ).model_dump(mode="json")
+        return JSONResponse(status_code=200, content=body)
 
-    result = await _call_runtime(runtime.explain, executor, text, label)
-    spans_plain = [
-        {
-            "text": s.text,
-            "start": s.start,
-            "end": s.end,
-            "score": s.score,
-            "normalized_importance": s.normalized_importance,
-        }
-        for s in result.spans
-    ]
-    background_tasks.add_task(
-        _persist_explanation,
-        id=uuid4(),
+    # Miss: idempotent create-or-return, then wake the worker via Redis.
+    # The API never runs IG here, so classify stays hot under explain load.
+    from app.db.repository import create_job
+
+    job, _ = await create_job(
+        db,
         classification_id=classification_id,
-        label=result.label,
-        spans=spans_plain,
-        convergence_delta=result.convergence_delta,
+        label=label,
         model_version=model_version,
     )
+    try:
+        from app.db.queue import enqueue_explain_job
+
+        await enqueue_explain_job(job.id)
+    except Exception:
+        logger.exception("redis enqueue failed for job %s", job.id)
+        # Row is already queued in Postgres; worker rebuilds from it on boot.
+    body = ExplainJobResponse.model_validate(
+        {
+            "job_id": job.id,
+            "classification_id": job.classification_id,
+            "label": job.label,
+            "model_version": job.model_version,
+            "status": job.status,
+            "error": job.error,
+            "created_at": job.created_at,
+            "updated_at": job.updated_at,
+        }
+    ).model_dump(mode="json")
+    # 202 when newly queued; repeat of a queued/running job returns 200
+    # with the same body so clients can poll uniformly.
+    from app.db.repository import find_explanation as _find
+
+    fresh = await _find(
+        db, classification_id=classification_id, label=label, model_version=model_version
+    )
+    if fresh is not None:
+        ok = ExplainResponse.model_validate(
+            {
+                "text": classification.text,
+                "label": fresh.label,
+                "spans": fresh.spans,
+                "convergence_delta": fresh.convergence_delta,
+            }
+        ).model_dump(mode="json")
+        return JSONResponse(status_code=200, content=ok)
+    return JSONResponse(status_code=202, content=body)
+
+
+@router.get(
+    "/jobs/{job_id}",
+    response_model=ExplainJobDetailResponse,
+    summary="Explanation job status",
+    description="Postgres is truth. Queued/running poll again; done includes spans; failed includes error for retry visibility.",
+)
+async def get_explain_job(
+    job_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.db.repository import get_job
+
+    job = await get_job(db, job_id=job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    result = None
+    if job.status == "done":
+        expl = await find_explanation(
+            db,
+            classification_id=job.classification_id,
+            label=job.label,
+            model_version=job.model_version,
+        )
+        if expl is not None:
+            cls = await get_classification(db, classification_id=job.classification_id)
+            result = {
+                "text": cls.text if cls else "",
+                "label": expl.label,
+                "spans": expl.spans,
+                "convergence_delta": expl.convergence_delta,
+            }
     return {
-        "text": text,
-        "label": result.label,
-        "spans": list(result.spans),
-        "convergence_delta": result.convergence_delta
+        "job_id": job.id,
+        "classification_id": job.classification_id,
+        "label": job.label,
+        "model_version": job.model_version,
+        "status": job.status,
+        "error": job.error,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+        "result": result,
     }
 
 async def _persist_explanation(
@@ -321,92 +395,62 @@ async def _persist_explanation(
 
 @router.post(
     "/explain_batch",
-    response_model=ExplainBatchResponse,
-    summary="Explain a batch for one label",
-    description="Strict per id with shared label. Loads stored texts, serves cache hits instantly, runs one pooled batch for misses only. 404s on first unknown id to keep order exact.",
+    response_model=ExplainBatchJobsResponse,
+    status_code=202,
+    summary="Explain a batch for one label (async)",
+    description="Strict per id with shared label. Validates all ids (404 on first unknown), serves cache as done jobs, creates queued jobs for misses and pushes each to Redis. Poll GET /v1/jobs/{id} per job.",
 )
 async def explain_batch(
-    background_tasks: BackgroundTasks,
-    runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
-    executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
     db: Annotated[AsyncSession, Depends(get_db)],
     payload: BatchExplainRequest
 ):
+    from app.db.repository import create_job
+
     ids = payload.classification_ids
     label = payload.label
     model_version = "v2.0.0"
 
-    # Strict: load all rows first, 404 on first missing to keep order exact.
-    texts: list[str] = []
+    # Strict: all rows must exist to keep order exact.
     for cid in ids:
         row = await get_classification(db, classification_id=cid)
         if row is None:
             raise HTTPException(status_code=404, detail=f"classification {cid} not found")
-        texts.append(row.text)
 
-    # Cache per id; collect misses for one pooled batch call.
-    cached_by_idx: dict[int, object] = {}
-    miss_idx: list[int] = []
-    miss_texts: list[str] = []
-    for i, cid in enumerate(ids):
-        hit = await find_explanation(
+    jobs_out = []
+    for cid in ids:
+        # Served from cache: ensure a done job exists for uniform polling.
+        cached = await find_explanation(
             db, classification_id=cid, label=label, model_version=model_version
         )
-        if hit is not None:
-            cached_by_idx[i] = hit
-        else:
-            miss_idx.append(i)
-            miss_texts.append(texts[i])
-
-    fresh_by_idx: dict[int, object] = {}
-    if miss_texts:
-        fresh = await _call_runtime(runtime.explain_batch, executor, miss_texts, label)
-        for i, r in zip(miss_idx, fresh):
-            fresh_by_idx[i] = r
-        background_tasks.add_task(
-            _persist_explanations_batch,
-            items=[
-                {
-                    "id": uuid4(),
-                    "classification_id": ids[i],
-                    "label": r.label,
-                    "spans": [
-                        {
-                            "text": s.text,
-                            "start": s.start,
-                            "end": s.end,
-                            "score": s.score,
-                            "normalized_importance": s.normalized_importance,
-                        }
-                        for s in r.spans
-                    ],
-                    "convergence_delta": r.convergence_delta,
-                    "model_version": model_version,
-                }
-                for i, r in zip(miss_idx, fresh)
-            ],
+        job, created = await create_job(
+            db, classification_id=cid, label=label, model_version=model_version
         )
+        if cached is not None and job.status != "done":
+            from app.db.repository import mark_job
 
-    ordered = []
-    for i, cid in enumerate(ids):
-        if i in cached_by_idx:
-            c = cached_by_idx[i]
-            ordered.append(
-                {"text": texts[i], "label": c.label, "spans": c.spans, "convergence_delta": c.convergence_delta}
-            )
-        else:
-            r = fresh_by_idx[i]
-            ordered.append(
-                {"text": texts[i], "label": r.label, "spans": list(r.spans), "convergence_delta": r.convergence_delta}
-            )
-    return {"results": ordered}
+            job = await mark_job(db, job_id=job.id, status="done")
+        if created and cached is None:
+            try:
+                from app.db.queue import enqueue_explain_job
 
-async def _persist_explanations_batch(*, items: list[dict]):
-    try:
-        async with async_session() as session:
-            await save_explanations_batch(session, items=items)
-    except Exception:
-        logger.exception("background persist failed for %d explanations", len(items))
+                await enqueue_explain_job(job.id)
+            except Exception:
+                logger.exception("redis enqueue failed for job %s", job.id)
+        jobs_out.append(
+            ExplainJobResponse.model_validate(
+                {
+                    "job_id": job.id,
+                    "classification_id": job.classification_id,
+                    "label": job.label,
+                    "model_version": job.model_version,
+                    "status": job.status,
+                    "error": job.error,
+                    "created_at": job.created_at,
+                    "updated_at": job.updated_at,
+                }
+            )
+        )
+    return {"jobs": [j.model_dump(mode="json") for j in jobs_out]}
 
 def _model_info_to_list(info: ModelInfo) -> dict:
     return {
