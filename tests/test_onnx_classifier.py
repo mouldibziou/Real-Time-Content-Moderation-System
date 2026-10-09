@@ -87,6 +87,16 @@ class OnnxClassifierTests(TestCase):
         for value in feed.values():
             self.assertEqual(value.dtype, np.int64)
 
+    def test_chunked_batch_matches_individual_results_in_order(self):
+        texts = [str(i) for i in range(13)]
+        def logits(batch):
+            return np.asarray([[float(text)] * len(LABELS) for text in batch])
+        with patch.object(self.classifier, "_logits", side_effect=logits) as model:
+            actual = self.classifier.predict_batch(texts)
+            self.assertTrue(all(len(call.args[0]) <= 4 for call in model.call_args_list))
+            expected = [self.classifier.predict(text) for text in texts]
+        self.assertEqual(actual, expected)
+
     def test_parity_with_torch_classifier_on_same_logits(self):
         torch_logits = torch.tensor(LOGITS, dtype=torch.float32)
         model = Mock()

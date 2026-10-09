@@ -76,6 +76,13 @@ class ToxicityClassifier:
         )
 
     def predict_batch(self, texts:list[str]) -> list[ClassificationResult]:
+        # Bound model activations independently of the public request batch size.
+        results = []
+        for offset in range(0, len(texts), 4):
+            results.extend(self._predict_batch(texts[offset:offset + 4]))
+        return results
+
+    def _predict_batch(self, texts:list[str]) -> list[ClassificationResult]:
         """Classifies a batch of input sequences,
         returns the multi-label result as a list of dictionaries"""
 
@@ -184,6 +191,12 @@ class ToxicityOnnxClassifier:
         return self._to_results([text], self.labels, probs, predictions)[0]
 
     def predict_batch(self, texts:list[str]) -> list[ClassificationResult]:
+        results = []
+        for offset in range(0, len(texts), 4):
+            results.extend(self._predict_batch(texts[offset:offset + 4]))
+        return results
+
+    def _predict_batch(self, texts:list[str]) -> list[ClassificationResult]:
         """Classifies a batch of input sequences,
         returns the multi-label result as a list of dictionaries"""
         logits = self._logits(list(texts))
