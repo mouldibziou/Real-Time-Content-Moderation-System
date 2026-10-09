@@ -40,8 +40,8 @@ COPY alembic/ ./alembic/
 USER 10001:10001
 CMD ["alembic", "upgrade", "head"]
 
-# Last stage is the default image produced by docker build.
-FROM base AS runtime
+# Shared application layers for the API and explanation worker.
+FROM base AS application
 COPY --from=serving-dependencies /opt/venv /opt/venv
 COPY app/ ./app/
 COPY docker/healthcheck.py docker/verify_artifacts.py docker/model-manifest.json docker/logging.json ./docker/
@@ -80,10 +80,13 @@ CMD ["python", "-m", "uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port
 # Worker shares the runtime image byte-for-byte (model + serving deps +
 # redis client); only the command differs. One worker thread owns IG while
 # the API pool stays hot for classify. Scale replicas, never workers.
-FROM runtime AS worker
+FROM application AS worker
 USER 10001:10001
 STOPSIGNAL SIGTERM
 # No HTTP healthcheck: liveness is process + Redis/Postgres reachability
 # surfaced via worker_health= logs, not a port probe.
 HEALTHCHECK NONE
 CMD ["python", "-m", "app.worker"]
+
+# A plain docker build produces the API; the worker is an explicit target.
+FROM application AS runtime
