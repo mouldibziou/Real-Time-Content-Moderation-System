@@ -1,10 +1,13 @@
 from concurrent.futures import ThreadPoolExecutor
+import asyncio
 from hashlib import sha256
 from logging import getLogger
 from typing import Annotated
 from uuid import uuid4, UUID
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.params import Depends
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import(
@@ -83,17 +86,21 @@ async def get_runtime_status(
     "/health/ready",
     response_model=ReadinessResponse,
     summary="Readiness probe",
-    description="True when the model is loaded and accepting inference. For orchestrators, not moderators. Checks runtime only; DB outages do not fail readiness (return-first degraded mode).",
+    description="Checks model readiness and PostgreSQL connectivity; returns 503 when unavailable.",
 )
 async def get_readiness(
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
 ):
-    """
-    /v1/ready checks only runtime readiness as it is the only current dependency
-    it will later be expanded
-    """
     is_ready = runtime.is_ready()
-    return {"is_ready": is_ready}
+    if is_ready:
+        async def check_database():
+            async with async_session() as session:
+                await session.execute(text("SELECT 1"))
+        try:
+            await asyncio.wait_for(check_database(), timeout=2)
+        except Exception:
+            is_ready = False
+    return JSONResponse(status_code=200 if is_ready else 503, content={"is_ready": is_ready})
 
 @router.get(
     "/health/live",
@@ -102,9 +109,6 @@ async def get_readiness(
 )
 async def health_check() -> dict[str, str]:
     return {"status": "healthy"}
-
-# NOTE: not including a db health check because persistence operations are not public
-# and a down db must not pull traffic out.
 
 # NOTE: we await _call_runtime because it is an async function as it 
 # declared in dependencies.py, because we want to call runtime functions

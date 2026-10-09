@@ -34,7 +34,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 FROM base AS migrations
 COPY --from=migration-dependencies /opt/venv /opt/venv
 COPY app/__init__.py ./app/
-COPY app/db/__init__.py app/db/models.py ./app/db/
+COPY app/db/__init__.py app/db/models.py app/db/urls.py ./app/db/
 COPY alembic.ini ./
 COPY alembic/ ./alembic/
 USER 10001:10001

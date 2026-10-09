@@ -56,14 +56,13 @@ def create_app(
             "thresholds": list(info.thresholds),
         }
 
-        # Soft DB check: log-only, never block boot. Return-first serves
-        # 200s while Postgres blips; background persists retry/log.
+        # Boot can finish during a database outage; readiness gates traffic.
         try:
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             logger.info("database connectivity check passed")
         except Exception:
-            logger.warning("database unavailable at startup, serving without persistence", exc_info=True)
+            logger.warning("database unavailable at startup; readiness will fail", exc_info=True)
 
         try:
             yield

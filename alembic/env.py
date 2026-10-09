@@ -16,6 +16,7 @@ if config.config_file_name is not None:
 
 # Frozen models are the single source of truth; hand SQL is retired.
 from app.db.models import Base
+from app.db.urls import database_url
 
 target_metadata = Base.metadata
 
@@ -24,9 +25,9 @@ def _sync_url() -> str:
     if not url:
         raise RuntimeError("DATABASE_URL missing")
     # Migrations run sync via psycopg2; app runs async via asyncpg.
-    return url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+    return database_url(url, asynchronous=False).render_as_string(hide_password=False)
 
-config.set_main_option("sqlalchemy.url", _sync_url())
+config.set_main_option("sqlalchemy.url", _sync_url().replace("%", "%%"))
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

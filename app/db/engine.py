@@ -2,6 +2,7 @@ import os
 from collections.abc import AsyncGenerator
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from app.db.urls import database_url
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -18,9 +19,11 @@ NOTE: don't forget to add the database connection on startup
 # and keeps the event loop free. Especially with our API supporting
 # concurrent operations
 engine = create_async_engine(
-    DATABASE_URL,
+    database_url(DATABASE_URL, asynchronous=True),
     pool_size=5,
-    max_overflow=3
+    max_overflow=3,
+    pool_pre_ping=True,
+    connect_args={"timeout": 5, "command_timeout": 30},
     )
 
 # Factory producing one AsyncSession per use. expire_on_commit=False keeps
