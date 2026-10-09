@@ -6,10 +6,17 @@ import sys
 from unittest import TestCase
 from unittest.mock import patch
 
-from app.settings import RuntimeSettings, load_runtime_settings
+from app.settings import RuntimeSettings, load_runtime_settings, load_model_version
 
 
 class RuntimeConfigurationTests(TestCase):
+    def test_model_version_matches_packaged_release(self):
+        self.assertEqual(load_model_version({}), "v2.0.0")
+        self.assertEqual(load_model_version({"MODEL_VERSION": "v2.0.0"}), "v2.0.0")
+        for value in ("", "v3.0.0"):
+            with self.assertRaisesRegex(ValueError, "packaged model"):
+                load_model_version({"MODEL_VERSION": value})
+
     def test_defaults_select_cpu_and_onnx(self):
         settings = load_runtime_settings({})
         self.assertEqual(settings, RuntimeSettings())

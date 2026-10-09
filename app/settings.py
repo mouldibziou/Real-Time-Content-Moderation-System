@@ -5,6 +5,16 @@ import os
 from pathlib import Path
 import re
 
+MODEL_VERSION = "v2.0.0"
+
+
+def load_model_version(environ: Mapping[str, str] | None = None) -> str:
+    environment = os.environ if environ is None else environ
+    version = environment.get("MODEL_VERSION", MODEL_VERSION)
+    if version != MODEL_VERSION:
+        raise ValueError(f"MODEL_VERSION must match the packaged model: {MODEL_VERSION}")
+    return version
+
 @dataclass(frozen=True)
 class RuntimeSettings:
     max_length: int = 512

@@ -7,10 +7,11 @@ import signal
 from uuid import UUID
 
 from dotenv import load_dotenv
+from app.settings import load_model_version
 
 load_dotenv()
 logger = logging.getLogger("expl_worker")
-MODEL_VERSION = os.getenv("MODEL_VERSION", "v2.0.0")
+MODEL_VERSION = load_model_version()
 LEASE_SECONDS = int(os.getenv("WORKER_LEASE_SECONDS", "60"))
 if LEASE_SECONDS < 6:
     raise ValueError("WORKER_LEASE_SECONDS must be at least 6")

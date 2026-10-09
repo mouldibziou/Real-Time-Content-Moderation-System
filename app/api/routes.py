@@ -49,6 +49,9 @@ from app.db.repository import (
 )
 from app.metadata import ModelInfo
 from app.runtime import ApplicationRuntime, RuntimeStatus
+from app.settings import load_model_version
+
+MODEL_VERSION = load_model_version()
 
 logger = getLogger(__name__)
 
@@ -146,7 +149,7 @@ async def classify_text(
         id=classification_id,
         text=text,
         text_hash=sha256(text.encode("utf-8")).hexdigest(),
-        model_version="v2.0.0",
+        model_version=MODEL_VERSION,
         model_type=snapshot["model_type"],
         device=snapshot["device"],
         thresholds=snapshot["thresholds"],
@@ -180,7 +183,7 @@ async def classify_batch(
             "id": cid,
             "text": text,
             "text_hash": sha256(text.encode("utf-8")).hexdigest(),
-            "model_version": "v2.0.0",
+            "model_version": MODEL_VERSION,
             "model_type": snapshot["model_type"],
             "device": snapshot["device"],
             "thresholds": snapshot["thresholds"],
@@ -217,12 +220,14 @@ async def explain_text(
 
     classification_id = payload.classification_id
     label = payload.label
-    model_version = "v2.0.0"
+    model_version = MODEL_VERSION
 
     # Strict: must have been classified before. Reuse exact stored text.
     classification = await get_classification(db, classification_id=classification_id)
     if classification is None:
         raise HTTPException(status_code=404, detail="classification not found")
+    if classification.model_version != model_version:
+        raise HTTPException(status_code=409, detail="classification model version unavailable")
 
     # Cache before GPU: same (id, label, version) returns stored spans.
     cached = await find_explanation(
@@ -347,13 +352,15 @@ async def explain_batch(
 
     ids = payload.classification_ids
     label = payload.label
-    model_version = "v2.0.0"
+    model_version = MODEL_VERSION
 
     # Strict: all rows must exist to keep order exact.
     for cid in ids:
         row = await get_classification(db, classification_id=cid)
         if row is None:
             raise HTTPException(status_code=404, detail=f"classification {cid} not found")
+        if row.model_version != model_version:
+            raise HTTPException(status_code=409, detail="classification model version unavailable")
 
     jobs_out = []
     for cid in ids:
