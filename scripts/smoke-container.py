@@ -22,14 +22,15 @@ def smoke(base_url: str) -> None:
                 status, body = response.status, json.load(response)
         except HTTPError as error:
             status, body = error.code, json.load(error)
-        if status != expected:
+        allowed = expected if isinstance(expected, tuple) else (expected,)
+        if status not in allowed:
             raise RuntimeError(f"{method} {path}: expected HTTP {expected}, got {status}")
         return body
 
     deadline = monotonic() + 120
     while True:
         try:
-            if request("GET", "/v1/health/ready").get("is_ready") is True:
+            if request("GET", "/v1/health/ready", expected=(200, 503)).get("is_ready") is True:
                 break
         except (URLError, OSError):
             pass
@@ -55,28 +56,38 @@ def smoke(base_url: str) -> None:
     request("POST", "/v1/classify", {"text": " "}, expected=422)
 
     detail_path = f"/v1/classifications/{classified['classification_id']}"
-    # Current API persists after the response: tolerate the documented race.
-    deadline = monotonic() + 15
-    while True:
-        try:
-            detail = request("GET", detail_path)
-            break
-        except RuntimeError as error:
-            if "got 404" not in str(error) or monotonic() >= deadline:
-                raise
-            sleep(0.1)
+    detail = request("GET", detail_path)
+    repeated = request("POST", "/v1/classify", {"text": text})
+    assert repeated["classification_id"] == classified["classification_id"]
     assert detail["text"] == text
     assert detail["model_version"] == "v2.0.0"
     print("Classification, validation, and persisted lookup passed.", flush=True)
 
     explanation = request("POST", "/v1/explain", {
         "classification_id": classified["classification_id"], "label": "toxic",
-    })
+    }, expected=(200, 202))
+    if "job_id" in explanation:
+        job_path = f"/v1/jobs/{explanation['job_id']}"
+        deadline = monotonic() + 120
+        while True:
+            job = request("GET", job_path)
+            if job["status"] == "done":
+                explanation = job["result"]
+                break
+            if job["status"] == "failed":
+                raise RuntimeError(f"Explanation job failed: {job['error']}")
+            if monotonic() >= deadline:
+                raise TimeoutError("Worker did not complete the explanation")
+            sleep(0.2)
     assert explanation["spans"]
     assert explanation["label"] == "toxic"
     for span in explanation["spans"]:
         assert 0 <= span["start"] < span["end"] <= len(text)
         assert span["text"] == text[span["start"]:span["end"]]
+    cached = request("POST", "/v1/explain", {
+        "classification_id": classified["classification_id"], "label": "toxic",
+    })
+    assert cached == explanation
 
     correction = {label: False for label in LABELS}
     corrected = request("POST", detail_path + "/corrections", {

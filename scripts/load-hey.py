@@ -186,11 +186,11 @@ def main():
         ("/v1/explain_batch", {"classification_ids": ids[1:], "label": "toxic"}),
     ):
         code, _, _ = http(base, "POST", path, payload)
-        if code != 200:
+        if code not in (200, 202):
             raise RuntimeError(f"Preflight {path}: HTTP {code}")
-    # Wait for background explanation writes, rather than racing cache warmup.
+    # Wait for worker completion before measuring the cached lanes.
     for cid in ids:
-        deadline = monotonic() + 30
+        deadline = monotonic() + 120
         while True:
             code, detail, _ = http(base, "GET", f"/v1/classifications/{cid}")
             if code == 200 and detail.get("explanations"):
@@ -257,7 +257,7 @@ def main():
                               ["-n", "1", "-c", "1"], out / f"{name}.txt")
                     attempts += 1
                     codes.update(one["status_counts"])
-                    if one["status_counts"].get("200") == 1:
+                    if sum(one["status_counts"].get(code, 0) for code in ("200", "202")) == 1:
                         successful_times.append(one["mean_seconds"])
                     elif not one["status_counts"]:
                         codes["transport_error"] += 1
@@ -266,12 +266,12 @@ def main():
                     record.write(json.dumps({"workflow_error": str(error)}) + "\n")
                     sleep(0.5)
         results[name] = {"status_counts": dict(codes), "attempts": attempts,
-                         "rps": codes["200"] / args.duration,
-                         "successful_rps": codes["200"] / args.duration,
+                         "rps": (codes["200"] + codes["202"]) / args.duration,
+                         "successful_rps": (codes["200"] + codes["202"]) / args.duration,
                          "p95_seconds": percentile(successful_times, .95),
                          "p99_seconds": percentile(successful_times, .99),
                          "workflow_errors": failures,
-                         "percentiles": "Successful fresh explanation requests only"}
+                         "percentiles": "Accepted explanation requests; measures submission, not worker completion"}
 
     def monitor():
         with (out / "runtime-status.jsonl").open("w") as status_file, \
