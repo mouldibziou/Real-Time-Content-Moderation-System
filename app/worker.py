@@ -199,12 +199,12 @@ async def main() -> None:
     from app.worker_redis import BLOCK_TIMEOUT_SECONDS, WorkerRedis, create_worker_redis
     from app.runtime import ApplicationRuntime
     from app.services import build_services
-    from app.settings import RuntimeSettings
+    from app.settings import load_runtime_settings
 
     # Validate Redis configuration before loading the model.
     client = create_worker_redis(REDIS_URL)
     # Own model instance: loaded once, lives for the process lifetime.
-    runtime = ApplicationRuntime(settings=RuntimeSettings(), services_builder=build_services)
+    runtime = ApplicationRuntime(settings=load_runtime_settings(), services_builder=build_services)
     runtime.start()
     logger.info("worker model ready (version %s)", MODEL_VERSION)
 
