@@ -1,0 +1,98 @@
+# Local and staging orchestration. Production replaces db/redis with
+# managed addresses and runs migrate as a Job; api/worker stay identical.
+name: toxicity
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: toxicity
+      POSTGRES_PASSWORD: replace-me
+      POSTGRES_DB: toxicity
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U toxicity -d toxicity"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot schema migration; exits 0. API and worker require it done.
+  migrate:
+    build:
+      context: .
+      target: migrations
+      platforms: ["linux/amd64"]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://toxicity:replace-me@db:5432/toxicity
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [svc]
+
+  api:
+    build:
+      context: .
+      target: runtime
+      platforms: ["linux/amd64"]
+    command: ["python", "-m", "uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--log-config", "/opt/app/docker/logging.json"]
+    ports: ["8000:8000"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://toxicity:replace-me@db:5432/toxicity
+      REDIS_URL: redis://redis:6379/0
+      EXPLAIN_QUEUE_KEY: expl_jobs
+      MODEL_VERSION: v2.0.0
+      TOXICITY_DEVICE: cpu
+      TOXICITY_INFERENCE_BACKEND: onnx
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [svc]
+
+  worker:
+    build:
+      context: .
+      target: worker
+      platforms: ["linux/amd64"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://toxicity:replace-me@db:5432/toxicity
+      REDIS_URL: redis://redis:6379/0
+      EXPLAIN_QUEUE_KEY: expl_jobs
+      MODEL_VERSION: v2.0.0
+      TOXICITY_DEVICE: cpu
+      TOXICITY_INFERENCE_BACKEND: onnx
+      LOG_LEVEL: INFO
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+    networks: [svc]
+
+networks:
+  svc:
+
+volumes:
+  pgdata:
+  redisdata:

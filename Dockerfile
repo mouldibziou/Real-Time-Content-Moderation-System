@@ -76,3 +76,14 @@ STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
     CMD ["python", "/opt/app/docker/healthcheck.py"]
 CMD ["python", "-m", "uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--log-config", "/opt/app/docker/logging.json"]
+
+# Worker shares the runtime image byte-for-byte (model + serving deps +
+# redis client); only the command differs. One worker thread owns IG while
+# the API pool stays hot for classify. Scale replicas, never workers.
+FROM runtime AS worker
+USER 10001:10001
+STOPSIGNAL SIGTERM
+# No HTTP healthcheck: liveness is process + Redis/Postgres reachability
+# surfaced via worker_health= logs, not a port probe.
+HEALTHCHECK NONE
+CMD ["python", "-m", "app.worker"]
