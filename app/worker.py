@@ -96,13 +96,13 @@ async def _process_one(job_id: str, runtime) -> None:
         await mark_job(session, job_id=jid, status="done")
 
 
-async def _requeue_orphans() -> int:
+async def _requeue_orphans(redis) -> int:
     """On boot, re-push queued rows so crashes lose no work."""
     from sqlalchemy import select
 
     from app.db.engine import async_session
     from app.db.models import ExplanationJob
-    from app.db.queue import QUEUE_KEY, get_redis
+    from app.db.queue import QUEUE_KEY
 
     async with async_session() as session:
         rows = (
@@ -110,9 +110,8 @@ async def _requeue_orphans() -> int:
         ).scalars().all()
     if not rows:
         return 0
-    redis = get_redis()
     for jid in rows:
-        await redis.rpush(QUEUE_KEY, str(jid))
+        await redis.call("rpush", QUEUE_KEY, str(jid))
     return len(rows)
 
 
@@ -196,11 +195,14 @@ async def _process_batch(job_ids: list[str], runtime) -> None:
 
 async def main() -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-    from app.db.queue import QUEUE_KEY, get_redis
+    from app.db.queue import QUEUE_KEY, REDIS_URL
+    from app.worker_redis import BLOCK_TIMEOUT_SECONDS, WorkerRedis, create_worker_redis
     from app.runtime import ApplicationRuntime
     from app.services import build_services
     from app.settings import RuntimeSettings
 
+    # Validate Redis configuration before loading the model.
+    client = create_worker_redis(REDIS_URL)
     # Own model instance: loaded once, lives for the process lifetime.
     runtime = ApplicationRuntime(settings=RuntimeSettings(), services_builder=build_services)
     runtime.start()
@@ -214,22 +216,21 @@ async def main() -> None:
         except NotImplementedError:
             pass
 
-    n = await _requeue_orphans()
-    if n:
-        logger.info("re-queued %d orphan jobs from Postgres", n)
-
-    redis = get_redis()
-    logger.info("worker listening on redis queue %r", QUEUE_KEY)
+    redis = WorkerRedis(client, stop)
     try:
+        n = await _requeue_orphans(redis)
+        if n:
+            logger.info("re-queued %d orphan jobs from Postgres", n)
+        logger.info("worker listening on redis queue %r", QUEUE_KEY)
         while not stop.is_set():
-            popped = await redis.blpop(QUEUE_KEY, timeout=5)
+            popped = await redis.call("blpop", QUEUE_KEY, timeout=BLOCK_TIMEOUT_SECONDS)
             if popped is None:
                 continue
             _, first_id = popped
             # Drain up to 4 total without blocking: one IG batch per group.
             batch_ids = [first_id]
             for _ in range(3):
-                nxt = await redis.lpop(QUEUE_KEY)
+                nxt = await redis.call("lpop", QUEUE_KEY)
                 if nxt is None:
                     break
                 batch_ids.append(nxt)
@@ -241,8 +242,11 @@ async def main() -> None:
             except Exception:  # noqa: BLE001 - loop must never die on one batch
                 logger.exception("worker loop error on batch of %d", len(batch_ids))
     finally:
-        runtime.stop()
-        logger.info("worker shutdown complete")
+        try:
+            await client.aclose()
+        finally:
+            runtime.stop()
+            logger.info("worker_health=stopped worker shutdown complete")
 
 
 if __name__ == "__main__":

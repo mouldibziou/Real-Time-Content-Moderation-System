@@ -59,3 +59,26 @@ through jobs. Same contract for single and batch.
 2. Terminal A: `python -m uvicorn app.api.main:app --port 8000 --reload`.
 3. Terminal B: `python -m app.worker`.
 4. Classify, explain (202), poll job until `done`.
+
+## Connections (API, worker, Redis)
+
+Redis starts alone and knows nothing about your code. Locally
+`brew services start redis` listens on `localhost:6379`; in cloud the
+equivalent is a Memorystore/ElastiCache address. Nothing dials out from
+Redis to you.
+
+Each process dials in independently from the same `REDIS_URL`:
+
+- API (`app/db/queue.py`): first `enqueue_explain_job` lazily builds one
+  shared client via `Redis.from_url(REDIS_URL)` and `RPUSH`es job ids
+  onto `expl_jobs`. No subscriber, no inbound connection.
+- Worker (`app/worker.py` + `app/worker_redis.py`): validates the URL
+  before loading the model (bad URL fails fast, not after gigabytes),
+  then `BLPOP`s the same key in a loop. `BLPOP` is one long-lived
+  outbound connection that parks until a push arrives.
+
+So API-to-worker contact is never direct: API→Redis push, Redis→worker
+wake on the same key. Point both at the same URL and key and they meet;
+point them apart and each idles correctly. `.env` carries both URLs
+locally (`DATABASE_URL`, `REDIS_URL`); prod replaces both from the
+provider's secrets with zero code change.
