@@ -113,6 +113,8 @@ class ToxicityExplainer:
             additional_forward_args=(attention_mask, token_type_ids),
             target=self._label_to_index[label],
             n_steps=self.n_steps,
+            # Evaluate integration steps incrementally to bound worker memory.
+            internal_batch_size=max(len(texts), 8),
             return_convergence_delta=True,
         )
 
