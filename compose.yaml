@@ -5,6 +5,7 @@ name: toxicity
 services:
   db:
     image: postgres:16-alpine
+    networks: [svc]
     environment:
       POSTGRES_USER: toxicity
       POSTGRES_PASSWORD: replace-me
@@ -19,6 +20,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    networks: [svc]
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data
