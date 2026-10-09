@@ -2,6 +2,7 @@ import os
 from collections.abc import AsyncGenerator
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.exc import SQLAlchemyError
 from app.db.urls import database_url
 load_dotenv()
 
@@ -32,5 +33,9 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     # Per-request session(transaction): lends one pooled connection, guarantees close.
-    async with async_session() as session:
-        yield session
+    try:
+        async with async_session() as session:
+            yield session
+    except (OSError, TimeoutError) as exc:
+        # asyncpg can expose DNS, socket, and connection timeout errors directly.
+        raise SQLAlchemyError("Database connection unavailable") from exc

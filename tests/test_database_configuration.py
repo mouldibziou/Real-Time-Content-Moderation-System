@@ -32,6 +32,20 @@ class DatabaseUrlTests(TestCase):
 
 
 class ReadinessTests(IsolatedAsyncioTestCase):
+    async def test_raw_connection_errors_use_the_database_503_handler(self):
+        from app.db.engine import get_db
+        from sqlalchemy.exc import SQLAlchemyError
+        for error in (ConnectionRefusedError("unavailable"), TimeoutError("timed out")):
+            with self.subTest(error=type(error).__name__):
+                factory = MagicMock()
+                factory.return_value.__aenter__ = AsyncMock(return_value=AsyncMock())
+                factory.return_value.__aexit__ = AsyncMock(return_value=False)
+                with patch("app.db.engine.async_session", factory):
+                    dependency = get_db()
+                    await anext(dependency)
+                    with self.assertRaises(SQLAlchemyError):
+                        await dependency.athrow(error)
+
     async def test_database_outage_returns_503(self):
         from app.api.routes import get_readiness
         session = AsyncMock()
