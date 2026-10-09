@@ -279,7 +279,7 @@ async def explain_text(
     # The API never runs IG here, so classify stays hot under explain load.
     from app.db.repository import create_job
 
-    job, _ = await create_job(
+    job, created = await create_job(
         db,
         classification_id=classification_id,
         label=label,
@@ -288,7 +288,8 @@ async def explain_text(
     try:
         from app.db.queue import enqueue_explain_job
 
-        await enqueue_explain_job(job.id)
+        if created:
+            await enqueue_explain_job(job.id)
     except Exception:
         logger.exception("redis enqueue failed for job %s", job.id)
         # Row is already queued in Postgres; worker rebuilds from it on boot.
