@@ -1,0 +1,77 @@
+name: toxicity-cloud
+
+x-application: &application
+  platform: linux/amd64
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ["/tmp:rw,nosuid,noexec,size=128m"]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  stop_grace_period: 75s
+  networks: [svc]
+
+x-environment: &environment
+  DATABASE_URL: ${DATABASE_URL:?Set the managed PostgreSQL URL}
+  REDIS_URL: ${REDIS_URL:?Set the managed Redis URL}
+  EXPLAIN_QUEUE_KEY: ${EXPLAIN_QUEUE_KEY:-expl_jobs}
+  MODEL_VERSION: v2.0.0
+  TOXICITY_DEVICE: cpu
+  TOXICITY_INFERENCE_BACKEND: onnx
+
+services:
+  migrate:
+    platform: linux/amd64
+    image: ${IMAGE_PREFIX:-toxicity}-migrations:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      target: migrations
+      platforms: ["linux/amd64"]
+    restart: "no"
+    read_only: true
+    tmpfs: ["/tmp:rw,nosuid,noexec,size=64m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set the managed PostgreSQL URL}
+    networks: [svc]
+
+  api:
+    <<: *application
+    image: ${IMAGE_PREFIX:-toxicity}-api:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      target: runtime
+      platforms: ["linux/amd64"]
+    environment: *environment
+    ports: ["${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+
+  worker:
+    <<: *application
+    image: ${IMAGE_PREFIX:-toxicity}-worker:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      target: worker
+      platforms: ["linux/amd64"]
+    environment:
+      <<: *environment
+      WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-60}
+      LOG_LEVEL: INFO
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 3G
+
+networks:
+  svc:

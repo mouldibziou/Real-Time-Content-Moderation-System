@@ -2,9 +2,20 @@
 # managed addresses and runs migrate as a Job; api/worker stay identical.
 name: toxicity
 
+x-application: &application
+  platform: linux/amd64
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ["/tmp:rw,nosuid,noexec,size=128m"]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  stop_grace_period: 75s
+  networks: [svc]
+
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     networks: [svc]
     environment:
       POSTGRES_USER: toxicity
@@ -20,6 +31,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     networks: [svc]
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
@@ -32,6 +44,12 @@ services:
 
   # One-shot schema migration; exits 0. API and worker require it done.
   migrate:
+    platform: linux/amd64
+    restart: "no"
+    read_only: true
+    tmpfs: ["/tmp:rw,nosuid,noexec,size=64m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     build:
       context: .
       target: migrations
@@ -44,12 +62,13 @@ services:
     networks: [svc]
 
   api:
+    <<: *application
     build:
       context: .
       target: runtime
       platforms: ["linux/amd64"]
     command: ["python", "-m", "uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--log-config", "/opt/app/docker/logging.json"]
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
     environment:
       DATABASE_URL: postgresql+asyncpg://toxicity:replace-me@db:5432/toxicity
       REDIS_URL: redis://redis:6379/0
@@ -65,8 +84,14 @@ services:
       redis:
         condition: service_healthy
     networks: [svc]
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
 
   worker:
+    <<: *application
     build:
       context: .
       target: worker
@@ -79,6 +104,7 @@ services:
       TOXICITY_DEVICE: cpu
       TOXICITY_INFERENCE_BACKEND: onnx
       LOG_LEVEL: INFO
+      WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-60}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -90,6 +116,7 @@ services:
       resources:
         limits:
           cpus: "2"
+          memory: 3G
     networks: [svc]
 
 networks:
