@@ -19,6 +19,7 @@ from app.errors import (
     OperationWaitTimeoutError,
 )
 from app.db.engine import engine
+from app.db.queue import close_redis
 
 def create_app(
         settings: RuntimeSettings,
@@ -69,6 +70,7 @@ def create_app(
         finally:
             runtime.stop()
             runtime_executor.shutdown(wait=True, cancel_futures=True)
+            await close_redis()
             await engine.dispose() # We await because it returns a coroutine
 
     app = FastAPI(

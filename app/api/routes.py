@@ -261,7 +261,7 @@ async def explain_text(
             await enqueue_explain_job(job.id)
     except Exception:
         logger.exception("redis enqueue failed for job %s", job.id)
-        # Row is already queued in Postgres; worker rebuilds from it on boot.
+        # PostgreSQL polling recovers a missed notification while the worker runs.
     body = ExplainJobResponse.model_validate(
         {
             "job_id": job.id,
