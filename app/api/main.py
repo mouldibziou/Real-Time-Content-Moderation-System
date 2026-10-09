@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.runtime import ApplicationRuntime
 from app.services import ApplicationServices, build_services
@@ -79,6 +80,11 @@ def create_app(
         # Accept-Encoding: gzip.
     )
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+    @app.exception_handler(SQLAlchemyError)
+    async def database_error_handler(request: Request, exc: SQLAlchemyError):
+        logger.exception("database request failed")
+        return JSONResponse(status_code=503, content={"detail": "Database temporarily unavailable"})
 
     # Centralized domain -> HTTP mapping. Routes let these bubble;
     # handlers translate to retryable vs client-error signals.

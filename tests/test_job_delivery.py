@@ -170,3 +170,27 @@ class JobDeliveryTests(IsolatedAsyncioTestCase):
                 import json
                 self.assertEqual(json.loads(first.body)['job_id'], json.loads(second.body)['job_id'])
                 publish.assert_awaited_once()
+
+    def classification(self, content):
+        return dict(id=uuid4(), text=content, text_hash=sha256(content.encode()).hexdigest(),
+                    model_version='v2.0.0', model_type='distilbert', device='cpu', thresholds=[], labels={})
+
+    async def test_duplicate_classification_returns_existing_durable_id(self):
+        from app.db.engine import async_session
+        from app.db.repository import save_classification, get_classification
+        async with async_session() as s:
+            first = await save_classification(s, **self.classification('Repeated text'))
+            second = await save_classification(s, **self.classification('Repeated text'))
+            self.assertEqual(first, second)
+            self.assertIsNotNone(await get_classification(s, classification_id=second))
+
+    async def test_mixed_batch_preserves_new_rows_and_duplicate_order(self):
+        from app.db.engine import async_session
+        from app.db.repository import save_classification, save_classifications_batch, get_classification
+        async with async_session() as s:
+            existing = await save_classification(s, **self.classification('Existing'))
+            ids = await save_classifications_batch(s, items=[self.classification(t) for t in ['New first','Existing','New last','New first']])
+            self.assertEqual(ids[1], existing)
+            self.assertEqual(ids[0], ids[3])
+            for cid in ids:
+                self.assertIsNotNone(await get_classification(s, classification_id=cid))

@@ -3,6 +3,7 @@ from logging import getLogger
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,47 +11,23 @@ from app.db.models import Classification, CorrectionEvent, Explanation, Explanat
 
 logger = getLogger(__name__)
 
-async def save_classification(
-        session: AsyncSession,
-        *,
-        id: UUID,
-        text: str,
-        text_hash: str,
-        model_version: str,
-        model_type: str,
-        device: str,
-        thresholds: dict,
-        labels: dict,
-):
-    """Persist one classify result after the response returned.
+async def _insert_classification(session, item):
+    result = await session.execute(insert(Classification).values(**item)
+        .on_conflict_do_nothing(constraint="uq_class_text_model").returning(Classification.id))
+    cid = result.scalar_one_or_none()
+    if cid is None:
+        cid = (await session.execute(select(Classification.id).where(
+            Classification.text_hash == item["text_hash"],
+            Classification.model_version == item["model_version"],
+        ))).scalar_one()
+    return cid
 
-    Use case: POST /v1/classify return-first path. Handler generates id
-    upfront, returns {id, text, labels}, then background task calls this.
-    Duplicates on (text_hash, model_version) are benign repeats: roll back
-    and keep the earliest row instead of raising.
-    """
-    # Keyword construction only; server owns created_at via now().
-    new_classification = Classification(
-        id=id,
-        text=text,
-        text_hash=text_hash,
-        model_version=model_version,
-        model_type=model_type,
-        device=device,
-        thresholds=thresholds,
-        labels=labels,
-    )
-    session.add(new_classification)
-    # without await we return a coroutine and nothing persists.
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        logger.info(
-            "duplicate classification ignored for hash %s model %s",
-            text_hash,
-            model_version,
-        ) 
+
+async def save_classification(session: AsyncSession, **item) -> UUID:
+    cid = await _insert_classification(session, item)
+    await session.commit()
+    return cid
+
 
 async def get_classification(
         session: AsyncSession,
@@ -66,41 +43,14 @@ async def get_classification(
     return await session.get(Classification, classification_id)
 
 
-async def save_classifications_batch(
-    session: AsyncSession,
-    *,
-    items: list[dict],
-) -> None:
-    """Persist one classify_batch result set in a single transaction.
-
-    Use case: POST /v1/classify_batch return-first path. Ids pre-generated
-    so the response returns before this background commit. Duplicate
-    (hash, version) rows are skipped per item so one repeat never fails
-    the whole batch.
-    """
-    for item in items:
-        session.add(
-            Classification(
-                id=item["id"],
-                text=item["text"],
-                text_hash=item["text_hash"],
-                model_version=item["model_version"],
-                model_type=item["model_type"],
-                device=item["device"],
-                thresholds=item["thresholds"],
-                labels=item["labels"],
-            )
-        )
-        try:
-            await session.flush()
-        except IntegrityError:
-            await session.rollback()
-            logger.info(
-                "duplicate classification ignored for hash %s",
-                item["text_hash"],
-            )
-            continue
+async def save_classifications_batch(session: AsyncSession, *, items: list[dict]) -> list[UUID]:
+    unique = {(item["text_hash"], item["model_version"]): item for item in items}
+    ids = {}
+    # Consistent lock order prevents overlapping batches from deadlocking.
+    for key in sorted(unique):
+        ids[key] = await _insert_classification(session, unique[key])
     await session.commit()
+    return [ids[(item["text_hash"], item["model_version"])] for item in items]
 
 
 async def find_explanation(
