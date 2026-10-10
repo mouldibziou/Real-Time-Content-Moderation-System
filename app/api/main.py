@@ -4,7 +4,8 @@ import logging
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from sqlalchemy import text
@@ -22,6 +23,7 @@ from app.errors import (
 from app.db.engine import engine
 from app.db.queue import close_redis
 from app.observability import configure_logging, log_event, RequestLoggingMiddleware
+from app.metrics import ApiMetrics, MetricsMiddleware, read_queue_counts, render_api_metrics
 
 def create_app(
         settings: RuntimeSettings,
@@ -85,6 +87,14 @@ def create_app(
     )
     app.add_middleware(GZipMiddleware, minimum_size=1000)
     app.add_middleware(RequestLoggingMiddleware)
+    metrics = ApiMetrics()
+    app.state.metrics = metrics
+    app.add_middleware(MetricsMiddleware, metrics=metrics)
+
+    @app.get("/metrics/", include_in_schema=False)
+    async def prometheus_metrics():
+        counts = await read_queue_counts()
+        return Response(render_api_metrics(metrics, counts), headers={"Content-Type": CONTENT_TYPE_LATEST})
 
     @app.exception_handler(SQLAlchemyError)
     async def database_error_handler(request: Request, exc: SQLAlchemyError):

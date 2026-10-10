@@ -14,3 +14,4 @@ sqlalchemy[asyncio]==2.1.2
 asyncpg==0.31.0
 python-dotenv==1.2.2
 redis==8.1.0
+prometheus-client==0.26.0

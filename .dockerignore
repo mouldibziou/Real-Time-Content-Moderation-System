@@ -1,6 +1,9 @@
 # Allow only build inputs; Git ignores do not control Docker's build context.
 **
 !Dockerfile
+!Dockerfile.monitoring
+!monitoring/
+!monitoring/**
 !.dockerignore
 !requirements.txt
 !requirements/

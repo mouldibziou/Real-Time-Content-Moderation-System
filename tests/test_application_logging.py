@@ -58,7 +58,8 @@ class ASGIClient:
                 raise
         start = next(m for m in messages if m["type"] == "http.response.start")
         return SimpleNamespace(status_code=start["status"],
-                               headers={k.decode().lower(): v.decode() for k, v in start["headers"]})
+                               headers={k.decode().lower(): v.decode() for k, v in start["headers"]},
+                               body=b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body"))
 
 
 class FormatterTests(TestCase):

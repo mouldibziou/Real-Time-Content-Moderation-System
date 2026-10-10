@@ -53,6 +53,7 @@ from app.metadata import ModelInfo
 from app.runtime import ApplicationRuntime, RuntimeStatus
 from app.settings import load_model_version
 from app.observability import bind_context, log_event
+from app.metrics import current_api_metrics
 
 MODEL_VERSION = load_model_version()
 
@@ -163,6 +164,8 @@ async def classify_text(
     )
 
     bind_context(stage="response", classification_id=classification_id)
+    if (metrics := current_api_metrics()) is not None:
+        metrics.record_predictions([result])
     log_event(logger, "classification.completed", batch_size=1,
               duration_ms=round((monotonic() - started) * 1000, 2))
     return {
@@ -207,6 +210,8 @@ async def classify_batch(
     ]
     bind_context(stage="classification.persistence")
     ids = await save_classifications_batch(db, items=items)
+    if (metrics := current_api_metrics()) is not None:
+        metrics.record_predictions(results)
     bind_context(stage="response")
     log_event(logger, "classification.batch_completed", batch_size=len(texts),
               duration_ms=round((monotonic() - started) * 1000, 2))
@@ -261,6 +266,8 @@ async def explain_text(
                 "convergence_delta": cached.convergence_delta,
             }
         ).model_dump(mode="json")
+        if (metrics := current_api_metrics()) is not None:
+            metrics.cache_hits.inc()
         return JSONResponse(status_code=200, content=body)
 
     # Miss: idempotent create-or-return, then wake the worker via Redis.
@@ -275,6 +282,8 @@ async def explain_text(
         model_version=model_version,
     )
     bind_context(job_id=job.id)
+    if created and (metrics := current_api_metrics()) is not None:
+        metrics.jobs_created.inc()
     log_event(logger, "explanation.job_created" if created else "explanation.job_reused",
               job_status=job.status)
     try:
@@ -319,6 +328,8 @@ async def explain_text(
                 "convergence_delta": fresh.convergence_delta,
             }
         ).model_dump(mode="json")
+        if (metrics := current_api_metrics()) is not None:
+            metrics.cache_hits.inc()
         return JSONResponse(status_code=200, content=ok)
     bind_context(stage="response")
     return JSONResponse(status_code=202, content=body)
@@ -411,6 +422,8 @@ async def explain_batch(
         log_event(logger, "explanation.job_created" if created else "explanation.job_reused",
                   classification_id=cid, job_id=job.id, job_status=job.status)
         created_count += int(created)
+        if created and (metrics := current_api_metrics()) is not None:
+            metrics.jobs_created.inc()
         cached_count += int(cached is not None)
         if cached is not None and job.status != "done":
             from app.db.repository import mark_job
@@ -446,6 +459,8 @@ async def explain_batch(
             )
         )
     bind_context(stage="response")
+    if (metrics := current_api_metrics()) is not None:
+        metrics.cache_hits.inc(cached_count)
     log_event(logger, "explanation.batch_submitted", batch_size=len(ids),
               created_count=created_count, cached_count=cached_count)
     return {"jobs": [j.model_dump(mode="json") for j in jobs_out]}

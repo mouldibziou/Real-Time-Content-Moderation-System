@@ -44,6 +44,7 @@ services:
 
   # One-shot schema migration; exits 0. API and worker require it done.
   migrate:
+    image: ${IMAGE_PREFIX:-toxicity}-migrations:${IMAGE_TAG:-latest}
     platform: linux/amd64
     restart: "no"
     read_only: true
@@ -62,6 +63,7 @@ services:
     networks: [svc]
 
   api:
+    image: ${IMAGE_PREFIX:-toxicity}-api:${IMAGE_TAG:-latest}
     <<: *application
     build:
       context: .
@@ -92,6 +94,7 @@ services:
           memory: ${API_MEMORY:-2G}
 
   worker:
+    image: ${IMAGE_PREFIX:-toxicity}-worker:${IMAGE_TAG:-latest}
     <<: *application
     build:
       context: .
@@ -106,7 +109,9 @@ services:
       TOXICITY_INFERENCE_BACKEND: onnx
       TOXICITY_CPU_THREADS: ${WORKER_CPU_THREADS:-0}
       LOG_LEVEL: INFO
+      WORKER_METRICS_PORT: ${WORKER_METRICS_PORT:-9101}
       WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-60}
+    expose: ["${WORKER_METRICS_PORT:-9101}"]
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 import logging
 
@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.db.models import Explanation, ExplanationJob
 from app.observability import log_event
+from app.metrics import WORKER_METRICS
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ async def recover_jobs(session):
     recovered = result.all()
     await session.commit()
     for job_id, status, attempt in recovered:
+        WORKER_METRICS.outcomes.labels("retry" if status == "queued" else "failed").inc()
         log_event(logger, "explanation.job_recovered" if status == "queued" else "explanation.job_failed",
                   level=logging.WARNING if status == "queued" else logging.ERROR,
                   job_id=job_id, job_status=status, attempt=attempt, reason="lease_expired")
@@ -45,6 +47,10 @@ async def claim_job(session, job_id, *, lease_seconds=60):
     )
     job = result.scalar_one_or_none()
     await session.commit()
+    if job is not None:
+        WORKER_METRICS.attempts.inc()
+        if job.attempts == 1:
+            WORKER_METRICS.queue_wait.observe(max(0, (job.updated_at - job.created_at).total_seconds()))
     return job
 
 
@@ -78,6 +84,8 @@ async def finish_job(session, job_id, token, result):
     job.lease_token, job.lease_expires_at = None, None
     job.updated_at = func.now()
     await session.commit()
+    WORKER_METRICS.outcomes.labels("completed").inc()
+    WORKER_METRICS.end_to_end.observe(max(0, (datetime.now(timezone.utc) - job.created_at).total_seconds()))
     return True
 
 
@@ -94,4 +102,6 @@ async def fail_job(session, job_id, token, error, *, permanent=False):
     )
     status = result.scalar_one_or_none()
     await session.commit()
+    if status is not None:
+        WORKER_METRICS.outcomes.labels("retry" if status == "queued" else "failed").inc()
     return status

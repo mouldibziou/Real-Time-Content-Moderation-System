@@ -11,6 +11,8 @@ from uuid import UUID
 from dotenv import load_dotenv
 from app.settings import load_model_version
 from app.observability import configure_logging, log_event
+from app.metrics import WORKER_METRICS
+from prometheus_client import start_http_server
 
 load_dotenv()
 logger = logging.getLogger("expl_worker")
@@ -37,6 +39,16 @@ async def _heartbeat(jobs, finished):
 
 
 async def _process_batch(job_ids, runtime):
+    attempt_starts = {}
+    try:
+        await _process_batch_with_timing(job_ids, runtime, attempt_starts)
+    finally:
+        # Include abandoned/cancelled attempts, not just successful ones.
+        for started in attempt_starts.values():
+            WORKER_METRICS.attempt_duration.observe(monotonic() - started)
+
+
+async def _process_batch_with_timing(job_ids, runtime, attempt_starts):
     from app.db.engine import async_session
     from app.db.jobs import claim_job, fail_job, finish_job
     from app.db.repository import get_classification
@@ -52,6 +64,7 @@ async def _process_batch(job_ids, runtime):
             job = await claim_job(session, jid, lease_seconds=LEASE_SECONDS)
             if job is None:
                 continue
+            attempt_starts[job.id] = monotonic()
             log_event(logger, "explanation.job_claimed", job_id=job.id,
                       classification_id=job.classification_id, label=job.label,
                       model_version=job.model_version, attempt=job.attempts)
@@ -59,6 +72,7 @@ async def _process_batch(job_ids, runtime):
             if classification is None or job.model_version != MODEL_VERSION:
                 status = await fail_job(session, jid, job.lease_token,
                                         "Classification missing or model version unavailable", permanent=True)
+                WORKER_METRICS.attempt_duration.observe(monotonic() - attempt_starts.pop(job.id))
                 log_event(logger, "explanation.job_failed" if status else "explanation.ownership_lost",
                           level=logging.ERROR if status else logging.WARNING,
                           job_id=job.id, classification_id=job.classification_id,
@@ -87,6 +101,7 @@ async def _process_batch(job_ids, runtime):
                 async with async_session() as session:
                     for (job, _), result in zip(items, results):
                         committed = await finish_job(session, job.id, job.lease_token, result)
+                        WORKER_METRICS.attempt_duration.observe(monotonic() - attempt_starts.pop(job.id))
                         finalized.add(job.id)
                         log_event(logger, "explanation.job_completed" if committed else "explanation.ownership_lost",
                                   level=logging.INFO if committed else logging.WARNING,
@@ -105,6 +120,7 @@ async def _process_batch(job_ids, runtime):
                     for job in jobs:
                         status = await fail_job(session, job.id, job.lease_token, str(exc),
                                                 permanent=isinstance(exc, (ValueError, TypeError)))
+                        WORKER_METRICS.attempt_duration.observe(monotonic() - attempt_starts.pop(job.id))
                         event = {"queued": "explanation.retry_scheduled", "failed": "explanation.job_failed"}.get(
                             status, "explanation.ownership_lost")
                         log_event(logger, event, level=logging.ERROR if status == "failed" else logging.WARNING,
@@ -151,7 +167,14 @@ async def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
     redis = WorkerRedis(client, stop)
+    metrics_server = None
     try:
+        metrics_port = int(os.getenv("WORKER_METRICS_PORT", "9101"))
+        if not 1 <= metrics_port <= 65535:
+            raise ValueError("WORKER_METRICS_PORT must be between 1 and 65535")
+        metrics_server, metrics_thread = start_http_server(
+            metrics_port, addr=os.getenv("WORKER_METRICS_HOST", "0.0.0.0"), registry=WORKER_METRICS.registry
+        )
         runtime.start()
         log_event(logger, "worker.ready", model_version=MODEL_VERSION)
         while not stop.is_set():
@@ -171,6 +194,10 @@ async def main():
                 batch.append(raw)
             await _process_batch(batch, runtime)
     finally:
+        if metrics_server is not None:
+            await asyncio.to_thread(metrics_server.shutdown)
+            metrics_server.server_close()
+            await asyncio.to_thread(metrics_thread.join)
         await client.aclose()
         runtime.stop()
         await engine.dispose()

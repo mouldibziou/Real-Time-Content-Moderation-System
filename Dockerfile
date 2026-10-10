@@ -80,6 +80,7 @@ CMD ["python", "-m", "uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port
 # the API pool stays hot for classify. Scale replicas, never workers.
 FROM application AS worker
 USER 10001:10001
+EXPOSE 9101
 STOPSIGNAL SIGTERM
 # No HTTP healthcheck: liveness is process + Redis/Postgres reachability
 # surfaced via worker_health= logs, not a port probe.

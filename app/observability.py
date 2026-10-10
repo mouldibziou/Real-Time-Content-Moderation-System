@@ -112,7 +112,7 @@ class RequestLoggingMiddleware:
             finally:
                 route = getattr(scope.get("route"), "path", "unmatched")
                 # Quiet successful probes, but keep unhealthy probes visible.
-                quiet = route in {"/v1/health/live", "/v1/health/ready"} and status == 200
+                quiet = route in {"/v1/health/live", "/v1/health/ready", "/metrics/"} and status == 200
                 if not quiet or error or not response_complete:
                     failed = error is not None
                     event = "request.failed" if failed else (
