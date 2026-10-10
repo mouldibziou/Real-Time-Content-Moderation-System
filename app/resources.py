@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from time import monotonic
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerFast
-from onnxruntime import InferenceSession
+from onnxruntime import InferenceSession, SessionOptions
+from app.cpu import available_cpu_count
 import torch
 import logging
 
@@ -29,6 +30,10 @@ def load_resources(settings: RuntimeSettings) -> ModelResources:
         )
 
     device = resolve_device(settings.device)
+    if device.type == "cpu":
+        threads = settings.cpu_threads or available_cpu_count()
+        torch.set_num_threads(threads)
+        logger.debug("CPU inference configured threads=%d", threads)
 
     tokenizer = AutoTokenizer.from_pretrained(
         settings.model_dir,
@@ -103,7 +108,10 @@ def load_onnx_session(settings: RuntimeSettings) -> InferenceSession:
             f"or set inference_backend='torch'."
         )
 
-    session = InferenceSession(str(onnx_file), providers=list(settings.onnx_providers))
+    options = SessionOptions()
+    options.intra_op_num_threads = settings.cpu_threads or available_cpu_count()
+    session = InferenceSession(str(onnx_file), sess_options=options,
+                               providers=list(settings.onnx_providers))
 
     input_names = {model_input.name for model_input in session.get_inputs()}
     if not {"input_ids", "attention_mask"} <= input_names:

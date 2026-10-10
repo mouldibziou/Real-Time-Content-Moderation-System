@@ -22,6 +22,7 @@ class RuntimeSettings:
     labels: tuple[str, ...] = ('toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate')
     thresholds: tuple[float, ...] = (0.74, 0.45, 0.74, 0.59, 0.61, 0.76)
     device: str = "cpu"
+    cpu_threads: int = 0
     n_steps: int = 32
     max_text_chars: int = 10_000
     inference_backend: str = "onnx"
@@ -49,6 +50,8 @@ class RuntimeSettings:
     max_explanation_batch_size: int = 4
 
     def __post_init__(self) -> None:
+        if type(self.cpu_threads) is not int or self.cpu_threads < 0:
+            raise ValueError("CPU threads must be a nonnegative integer; 0 selects the container CPU budget")
         if not isinstance(self.device, str):
             raise TypeError("Device must be a string")
         if re.fullmatch(r"cpu|mps|cuda(?::[0-9]+)?", self.device) is None:
@@ -124,6 +127,7 @@ def load_runtime_settings(environ: Mapping[str, str] | None = None) -> RuntimeSe
     overrides = {}
     for variable, field, convert in (
         ("TOXICITY_DEVICE", "device", str),
+        ("TOXICITY_CPU_THREADS", "cpu_threads", int),
         ("TOXICITY_INFERENCE_BACKEND", "inference_backend", str),
         ("TOXICITY_MODEL_DIR", "model_dir", Path),
         ("TOXICITY_ONNX_MODEL_DIR", "onnx_model_dir", Path),

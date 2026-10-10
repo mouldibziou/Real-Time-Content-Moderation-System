@@ -249,5 +249,11 @@ class OnnxResourceLoadingTests(TestCase):
             SimpleNamespace(name="input_ids"),
             SimpleNamespace(name="attention_mask"),
         ]
-        with patch("app.resources.InferenceSession", return_value=session):
+        with patch("app.resources.InferenceSession", return_value=session) as loader, \
+             patch("app.resources.available_cpu_count", return_value=4):
             self.assertIs(load_onnx_session(settings), session)
+            self.assertEqual(loader.call_args.kwargs["sess_options"].intra_op_num_threads, 4)
+        settings = RuntimeSettings(device="cpu", onnx_model_dir=onnx_dir, cpu_threads=2)
+        with patch("app.resources.InferenceSession", return_value=session) as loader:
+            load_onnx_session(settings)
+            self.assertEqual(loader.call_args.kwargs["sess_options"].intra_op_num_threads, 2)
