@@ -2,6 +2,8 @@ from concurrent.futures import ThreadPoolExecutor
 import asyncio
 from hashlib import sha256
 from logging import getLogger
+import logging
+from time import monotonic
 from typing import Annotated
 from uuid import uuid4, UUID
 from fastapi import APIRouter, HTTPException, Query
@@ -50,6 +52,7 @@ from app.db.repository import (
 from app.metadata import ModelInfo
 from app.runtime import ApplicationRuntime, RuntimeStatus
 from app.settings import load_model_version
+from app.observability import bind_context, log_event
 
 MODEL_VERSION = load_model_version()
 
@@ -135,6 +138,8 @@ async def classify_text(
     turning one-shot inference into addressable explainable history
     """
     text = payload.text
+    started = monotonic()
+    bind_context(stage="classification.runtime", model_version=MODEL_VERSION)
     result = await _call_runtime(runtime.predict, executor, text) # NOTE: Next time figure this out BETTER
     classification_id = uuid4()
 
@@ -144,6 +149,7 @@ async def classify_text(
         label: {"probability": pred.probability, "predicted": pred.predicted}
         for label, pred in result.labels.items()
     }
+    bind_context(stage="classification.persistence")
     classification_id = await save_classification(
         db,
         id=classification_id,
@@ -156,6 +162,9 @@ async def classify_text(
         labels=labels_plain,
     )
 
+    bind_context(stage="response", classification_id=classification_id)
+    log_event(logger, "classification.completed", batch_size=1,
+              duration_ms=round((monotonic() - started) * 1000, 2))
     return {
         "text": text,
         "labels": result.labels,
@@ -176,6 +185,8 @@ async def classify_batch(
     payload: BatchClassifyRequest
 ):
     texts = payload.texts
+    started = monotonic()
+    bind_context(stage="classification.runtime", model_version=MODEL_VERSION, batch_size=len(texts))
     results = await _call_runtime(runtime.predict_batch, executor, texts)
     ids = [uuid4() for _ in texts]
     items = [
@@ -194,7 +205,11 @@ async def classify_batch(
         }
         for cid, text, r in zip(ids, texts, results)
     ]
+    bind_context(stage="classification.persistence")
     ids = await save_classifications_batch(db, items=items)
+    bind_context(stage="response")
+    log_event(logger, "classification.batch_completed", batch_size=len(texts),
+              duration_ms=round((monotonic() - started) * 1000, 2))
     return {
         "results": [
             {"text": text, "labels": r.labels, "classification_id": cid}
@@ -221,6 +236,8 @@ async def explain_text(
     classification_id = payload.classification_id
     label = payload.label
     model_version = MODEL_VERSION
+    bind_context(stage="explanation.lookup", classification_id=classification_id,
+                 label=label, model_version=model_version)
 
     # Strict: must have been classified before. Reuse exact stored text.
     classification = await get_classification(db, classification_id=classification_id)
@@ -234,6 +251,8 @@ async def explain_text(
         db, classification_id=classification_id, label=label, model_version=model_version
     )
     if cached is not None:
+        bind_context(stage="response")
+        log_event(logger, "explanation.cache_hit")
         body = ExplainResponse.model_validate(
             {
                 "text": classification.text,
@@ -248,19 +267,26 @@ async def explain_text(
     # The API never runs IG here, so classify stays hot under explain load.
     from app.db.repository import create_job
 
+    bind_context(stage="explanation.job_creation")
     job, created = await create_job(
         db,
         classification_id=classification_id,
         label=label,
         model_version=model_version,
     )
+    bind_context(job_id=job.id)
+    log_event(logger, "explanation.job_created" if created else "explanation.job_reused",
+              job_status=job.status)
     try:
         from app.db.queue import enqueue_explain_job
 
         if created:
+            bind_context(stage="explanation.notification")
             await enqueue_explain_job(job.id)
+            log_event(logger, "explanation.worker_notified", level=logging.DEBUG)
     except Exception:
-        logger.exception("redis enqueue failed for job %s", job.id)
+        log_event(logger, "explanation.notification_failed", level=logging.WARNING,
+                  exc_info=True, recovery="database_polling")
         # PostgreSQL polling recovers a missed notification while the worker runs.
     body = ExplainJobResponse.model_validate(
         {
@@ -278,10 +304,13 @@ async def explain_text(
     # with the same body so clients can poll uniformly.
     from app.db.repository import find_explanation as _find
 
+    bind_context(stage="explanation.lookup")
     fresh = await _find(
         db, classification_id=classification_id, label=label, model_version=model_version
     )
     if fresh is not None:
+        bind_context(stage="response")
+        log_event(logger, "explanation.cache_hit", source="post_submission_check")
         ok = ExplainResponse.model_validate(
             {
                 "text": classification.text,
@@ -291,6 +320,7 @@ async def explain_text(
             }
         ).model_dump(mode="json")
         return JSONResponse(status_code=200, content=ok)
+    bind_context(stage="response")
     return JSONResponse(status_code=202, content=body)
 
 
@@ -306,6 +336,7 @@ async def get_explain_job(
 ):
     from app.db.repository import get_job
 
+    bind_context(stage="explanation.job_lookup", job_id=job_id)
     job = await get_job(db, job_id=job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -353,6 +384,8 @@ async def explain_batch(
     ids = payload.classification_ids
     label = payload.label
     model_version = MODEL_VERSION
+    bind_context(stage="explanation.batch_lookup", model_version=model_version,
+                 label=label, batch_size=len(ids))
 
     # Strict: all rows must exist to keep order exact.
     for cid in ids:
@@ -363,25 +396,41 @@ async def explain_batch(
             raise HTTPException(status_code=409, detail="classification model version unavailable")
 
     jobs_out = []
+    cached_count = 0
+    created_count = 0
     for cid in ids:
         # Served from cache: ensure a done job exists for uniform polling.
+        bind_context(stage="explanation.lookup")
         cached = await find_explanation(
             db, classification_id=cid, label=label, model_version=model_version
         )
+        bind_context(stage="explanation.job_creation")
         job, created = await create_job(
             db, classification_id=cid, label=label, model_version=model_version
         )
+        log_event(logger, "explanation.job_created" if created else "explanation.job_reused",
+                  classification_id=cid, job_id=job.id, job_status=job.status)
+        created_count += int(created)
+        cached_count += int(cached is not None)
         if cached is not None and job.status != "done":
             from app.db.repository import mark_job
 
+            bind_context(stage="explanation.persistence")
             job = await mark_job(db, job_id=job.id, status="done")
+        if cached is not None:
+            log_event(logger, "explanation.cache_hit", classification_id=cid, job_id=job.id)
         if created and cached is None:
             try:
                 from app.db.queue import enqueue_explain_job
 
+                bind_context(stage="explanation.notification")
                 await enqueue_explain_job(job.id)
+                log_event(logger, "explanation.worker_notified", level=logging.DEBUG,
+                          classification_id=cid, job_id=job.id)
             except Exception:
-                logger.exception("redis enqueue failed for job %s", job.id)
+                log_event(logger, "explanation.notification_failed", level=logging.WARNING,
+                          exc_info=True, classification_id=cid, job_id=job.id,
+                          recovery="database_polling")
         jobs_out.append(
             ExplainJobResponse.model_validate(
                 {
@@ -396,6 +445,9 @@ async def explain_batch(
                 }
             )
         )
+    bind_context(stage="response")
+    log_event(logger, "explanation.batch_submitted", batch_size=len(ids),
+              created_count=created_count, cached_count=cached_count)
     return {"jobs": [j.model_dump(mode="json") for j in jobs_out]}
 
 def _model_info_to_list(info: ModelInfo) -> dict:
@@ -526,6 +578,7 @@ async def create_correction(
             detail=f"corrected_labels must contain exactly {sorted(row.labels.keys())}",
         )
     flagged_at = datetime.now(timezone.utc)
+    bind_context(stage="correction.persistence", classification_id=classification_id)
     # Repository commits; re-fetch latest to return the stored row shape.
     await add_correction(
         db,
@@ -534,6 +587,7 @@ async def create_correction(
         flagged_at=flagged_at,
         moderator_id=payload.moderator_id,
     )
+    log_event(logger, "correction.saved")
     latest = await get_latest_correction(db, classification_id=classification_id)
     assert latest is not None
     return _correction_to_response(latest)

@@ -1,24 +1,33 @@
 from datetime import timedelta
 from uuid import uuid4
+import logging
 
 from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.db.models import Explanation, ExplanationJob
+from app.observability import log_event
+
+logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
 
 
 async def recover_jobs(session):
     expired = or_(ExplanationJob.lease_expires_at.is_(None), ExplanationJob.lease_expires_at <= func.now())
-    await session.execute(
+    result = await session.execute(
         update(ExplanationJob).where(ExplanationJob.status == "running", expired).values(
             status=case((ExplanationJob.attempts >= MAX_ATTEMPTS, "failed"), else_="queued"),
             lease_token=None, lease_expires_at=None, error="Worker lease expired",
             updated_at=func.now(),
-        )
+        ).returning(ExplanationJob.id, ExplanationJob.status, ExplanationJob.attempts)
     )
+    recovered = result.all()
     await session.commit()
+    for job_id, status, attempt in recovered:
+        log_event(logger, "explanation.job_recovered" if status == "queued" else "explanation.job_failed",
+                  level=logging.WARNING if status == "queued" else logging.ERROR,
+                  job_id=job_id, job_status=status, attempt=attempt, reason="lease_expired")
 
 
 async def claim_job(session, job_id, *, lease_seconds=60):
@@ -73,7 +82,7 @@ async def finish_job(session, job_id, token, result):
 
 
 async def fail_job(session, job_id, token, error, *, permanent=False):
-    await session.execute(
+    result = await session.execute(
         update(ExplanationJob).where(
             ExplanationJob.id == job_id, ExplanationJob.status == "running",
             ExplanationJob.lease_token == token,
@@ -81,6 +90,8 @@ async def fail_job(session, job_id, token, error, *, permanent=False):
             status="failed" if permanent else case(
                 (ExplanationJob.attempts >= MAX_ATTEMPTS, "failed"), else_="queued"),
             error=error[:500], lease_token=None, lease_expires_at=None, updated_at=func.now(),
-        )
+        ).returning(ExplanationJob.status)
     )
+    status = result.scalar_one_or_none()
     await session.commit()
+    return status

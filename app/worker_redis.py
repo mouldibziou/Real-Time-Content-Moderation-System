@@ -59,12 +59,21 @@ class WorkerRedis:
                     logger.error(
                         "worker_health=failed redis_command=%s retries=%d error_type=%s",
                         command, attempt, type(exc).__name__,
+                        extra={"event": "worker.redis_failed", "fields": {
+                            "worker_health": "failed", "redis_command": command,
+                            "retries": attempt, "error_type": type(exc).__name__,
+                        }},
                     )
                     raise
                 delay = min(0.5 * 2 ** attempt, 8)
                 logger.warning(
                     "worker_health=degraded redis_command=%s retry=%d delay_seconds=%s error_type=%s",
                     command, attempt + 1, delay, type(exc).__name__,
+                    extra={"event": "worker.redis_retry", "fields": {
+                        "worker_health": "degraded", "redis_command": command,
+                        "attempt": attempt + 1, "delay_seconds": delay,
+                        "error_type": type(exc).__name__,
+                    }},
                 )
                 # Event.wait lets SIGTERM interrupt reconnect backoff.
                 try:
@@ -74,6 +83,7 @@ class WorkerRedis:
                     continue
             else:
                 if not self.healthy:
-                    logger.info("worker_health=ready redis_connection=available")
+                    logger.info("worker_health=ready redis_connection=available",
+                                extra={"event": "worker.redis_ready", "fields": {"worker_health": "ready"}})
                 self.healthy = True
                 return result

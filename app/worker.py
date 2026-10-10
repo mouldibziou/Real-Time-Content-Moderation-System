@@ -4,10 +4,13 @@ from collections import defaultdict
 import logging
 import os
 import signal
+import sys
+from time import monotonic
 from uuid import UUID
 
 from dotenv import load_dotenv
 from app.settings import load_model_version
+from app.observability import configure_logging, log_event
 
 load_dotenv()
 logger = logging.getLogger("expl_worker")
@@ -29,7 +32,8 @@ async def _heartbeat(jobs, finished):
             async with async_session() as session:
                 for job in jobs:
                     if not await renew_job(session, job.id, job.lease_token, lease_seconds=LEASE_SECONDS):
-                        logger.warning("job ownership lost job_id=%s", job.id)
+                        log_event(logger, "explanation.ownership_lost", level=logging.WARNING,
+                                  job_id=job.id, attempt=job.attempts)
 
 
 async def _process_batch(job_ids, runtime):
@@ -42,16 +46,23 @@ async def _process_batch(job_ids, runtime):
         try:
             jid = UUID(raw)
         except (ValueError, TypeError):
-            logger.warning("dropping malformed job id %r", raw)
+            log_event(logger, "explanation.invalid_notification", level=logging.WARNING)
             continue
         async with async_session() as session:
             job = await claim_job(session, jid, lease_seconds=LEASE_SECONDS)
             if job is None:
                 continue
+            log_event(logger, "explanation.job_claimed", job_id=job.id,
+                      classification_id=job.classification_id, label=job.label,
+                      model_version=job.model_version, attempt=job.attempts)
             classification = await get_classification(session, classification_id=job.classification_id)
             if classification is None or job.model_version != MODEL_VERSION:
-                await fail_job(session, jid, job.lease_token,
-                               "Classification missing or model version unavailable", permanent=True)
+                status = await fail_job(session, jid, job.lease_token,
+                                        "Classification missing or model version unavailable", permanent=True)
+                log_event(logger, "explanation.job_failed" if status else "explanation.ownership_lost",
+                          level=logging.ERROR if status else logging.WARNING,
+                          job_id=job.id, classification_id=job.classification_id,
+                          attempt=job.attempts, reason="classification_or_model_unavailable")
                 continue
             groups[job.label].append((job, classification.text))
 
@@ -61,6 +72,9 @@ async def _process_batch(job_ids, runtime):
     try:
         for label, items in groups.items():
             jobs = [job for job, _ in items]
+            started = monotonic()
+            stage = "explanation.runtime"
+            finalized = set()
             try:
                 # Leave the event loop available for signals and lease renewal.
                 if len(items) == 1:
@@ -69,17 +83,34 @@ async def _process_batch(job_ids, runtime):
                     results = await asyncio.to_thread(runtime.explain_batch, [text for _, text in items], label)
                 if len(results) != len(items):
                     raise RuntimeError("Explainer returned an incomplete batch")
+                stage = "explanation.persistence"
                 async with async_session() as session:
                     for (job, _), result in zip(items, results):
-                        await finish_job(session, job.id, job.lease_token, result)
+                        committed = await finish_job(session, job.id, job.lease_token, result)
+                        finalized.add(job.id)
+                        log_event(logger, "explanation.job_completed" if committed else "explanation.ownership_lost",
+                                  level=logging.INFO if committed else logging.WARNING,
+                                  job_id=job.id, classification_id=job.classification_id,
+                                  model_version=job.model_version, label=label, attempt=job.attempts,
+                                  batch_size=len(items), duration_ms=round((monotonic() - started) * 1000, 2))
             except Exception as exc:
-                logger.exception("explanation processing failed")
+                jobs = [job for job in jobs if job.id not in finalized]
+                # One diagnostic entry per affected job; no exception values.
+                for job in jobs:
+                    log_event(logger, "explanation.attempt_failed", level=logging.ERROR, exc_info=True,
+                              job_id=job.id, classification_id=job.classification_id,
+                              attempt=job.attempts, stage=stage, model_version=job.model_version,
+                              duration_ms=round((monotonic() - started) * 1000, 2))
                 async with async_session() as session:
                     for job in jobs:
-                        await fail_job(session, job.id, job.lease_token, str(exc),
-                                       permanent=isinstance(exc, (ValueError, TypeError)))
+                        status = await fail_job(session, job.id, job.lease_token, str(exc),
+                                                permanent=isinstance(exc, (ValueError, TypeError)))
+                        event = {"queued": "explanation.retry_scheduled", "failed": "explanation.job_failed"}.get(
+                            status, "explanation.ownership_lost")
+                        log_event(logger, event, level=logging.ERROR if status == "failed" else logging.WARNING,
+                                  job_id=job.id, attempt=job.attempts, job_status=status)
             finally:
-                for job in jobs:
+                for job, _ in items:
                     active.remove(job)
     finally:
         finished.set()
@@ -105,7 +136,7 @@ async def _pending_jobs():
 
 
 async def main():
-    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+    configure_logging("worker")
     from app.db.engine import engine
     from app.db.queue import QUEUE_KEY, REDIS_URL
     from app.worker_redis import BLOCK_TIMEOUT_SECONDS, WorkerRedis, create_worker_redis
@@ -122,7 +153,7 @@ async def main():
     redis = WorkerRedis(client, stop)
     try:
         runtime.start()
-        logger.info("worker model ready (version %s)", MODEL_VERSION)
+        log_event(logger, "worker.ready", model_version=MODEL_VERSION)
         while not stop.is_set():
             # Recovers expired claims and missed Redis publications every cycle.
             pending = await _pending_jobs()
@@ -143,8 +174,12 @@ async def main():
         await client.aclose()
         runtime.stop()
         await engine.dispose()
-        logger.info("worker_health=stopped worker shutdown complete")
+        log_event(logger, "worker.stopped")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception:
+        log_event(logger, "worker.failed", level=logging.ERROR, exc_info=True)
+        sys.exit(1)

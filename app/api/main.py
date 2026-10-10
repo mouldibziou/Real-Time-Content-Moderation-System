@@ -1,9 +1,10 @@
 from typing import Callable
 from logging import getLogger
+import logging
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from sqlalchemy import text
@@ -20,6 +21,7 @@ from app.errors import (
 )
 from app.db.engine import engine
 from app.db.queue import close_redis
+from app.observability import configure_logging, log_event, RequestLoggingMiddleware
 
 def create_app(
         settings: RuntimeSettings,
@@ -32,6 +34,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        configure_logging("api")
         runtime = ApplicationRuntime(
             settings=settings,
             services_builder=services_builder
@@ -61,9 +64,9 @@ def create_app(
         try:
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
-            logger.info("database connectivity check passed")
+            log_event(logger, "database.ready")
         except Exception:
-            logger.warning("database unavailable at startup; readiness will fail", exc_info=True)
+            log_event(logger, "database.unavailable", level=logging.WARNING, exc_info=True)
 
         try:
             yield
@@ -81,11 +84,19 @@ def create_app(
         # Accept-Encoding: gzip.
     )
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+    app.add_middleware(RequestLoggingMiddleware)
 
     @app.exception_handler(SQLAlchemyError)
     async def database_error_handler(request: Request, exc: SQLAlchemyError):
-        logger.exception("database request failed")
+        log_event(logger, "database.request_failed", level=logging.ERROR, exc_info=True)
         return JSONResponse(status_code=503, content={"detail": "Database temporarily unavailable"})
+
+    @app.exception_handler(Exception)
+    async def unexpected_error_handler(request: Request, exc: Exception):
+        # Middleware already logged the error. Starlette renders this response
+        # outside that middleware, so attach its correlation ID here as well.
+        headers = {"X-Request-ID": request.state.request_id} if hasattr(request.state, "request_id") else {}
+        return PlainTextResponse("Internal Server Error", status_code=500, headers=headers)
 
     # Centralized domain -> HTTP mapping. Routes let these bubble;
     # handlers translate to retryable vs client-error signals.

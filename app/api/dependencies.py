@@ -4,6 +4,7 @@ from fastapi import Request
 from app.runtime import ApplicationRuntime
 from app.errors import RuntimeNotReadyError
 from functools import partial
+from contextvars import copy_context
 
 """
 For learning purposes:
@@ -64,4 +65,5 @@ async def _call_runtime(
     """
     bound_func = partial(func, *args, **kwargs)
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(executor, bound_func)
+    # run_in_executor does not propagate contextvars automatically.
+    return await loop.run_in_executor(executor, copy_context().run, bound_func)
