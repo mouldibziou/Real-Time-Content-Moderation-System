@@ -42,7 +42,9 @@ services:
       context: .
       target: runtime
       platforms: ["linux/amd64"]
-    environment: *environment
+    environment:
+      <<: *environment
+      TOXICITY_CPU_THREADS: ${API_CPU_THREADS:-0}
     ports: ["${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"]
     depends_on:
       migrate:
@@ -50,8 +52,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "2"
-          memory: 2G
+          cpus: "${API_CPUS:-0}"
+          memory: ${API_MEMORY:-2G}
 
   worker:
     <<: *application
@@ -64,14 +66,15 @@ services:
       <<: *environment
       WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-60}
       LOG_LEVEL: INFO
+      TOXICITY_CPU_THREADS: ${WORKER_CPU_THREADS:-0}
     depends_on:
       migrate:
         condition: service_completed_successfully
     deploy:
       resources:
         limits:
-          cpus: "2"
-          memory: 3G
+          cpus: "${WORKER_CPUS:-0}"
+          memory: ${WORKER_MEMORY:-3G}
 
 networks:
   svc:
