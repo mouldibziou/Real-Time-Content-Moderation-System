@@ -191,25 +191,28 @@ class ApiWorkflowLoggingTests(IsolatedAsyncioTestCase):
         self.executor.shutdown(wait=True)
 
     async def test_classification_logs_committed_id_and_never_input_text(self):
-        durable_id = uuid4()
-        with patch("app.api.routes.save_classification", AsyncMock(return_value=durable_id)), \
+        # Return-first: the logged id is pre-generated and echoed in the
+        # response; persistence happens in background with its own session.
+        with patch("app.api.routes.save_classification", AsyncMock()) as persisted, \
                 self.assertLogs("app", level="INFO") as captured:
             response = await self.client.post("/v1/classify", json={"text": "PRIVATE CLIENT COMMENT"})
         self.assertEqual(response.status_code, 200)
         records = formatted(captured.records)
         completed = next(r for r in records if r["event"] == "classification.completed")
-        self.assertEqual(completed["classification_id"], str(durable_id))
+        self.assertEqual(completed["classification_id"], json.loads(response.body)["classification_id"])
         self.assertEqual(completed["request_id"], response.headers["x-request-id"])
         self.assertNotIn("PRIVATE CLIENT COMMENT", json.dumps(records))
+        persisted.assert_awaited_once()
 
-    async def test_database_failure_has_stage_and_no_false_success(self):
+    async def test_database_failure_still_returns_but_never_false_success(self):
+        # Return-first: a persistence failure logs in background and never
+        # fails the already-returned 200, and no input text leaks.
         with patch("app.api.routes.save_classification", AsyncMock(side_effect=SQLAlchemyError("PRIVATE SQL PARAMS"))), \
                 self.assertLogs("app", level="INFO") as captured:
             response = await self.client.post("/v1/classify", json={"text": "private text"})
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 200)
         records = formatted(captured.records)
-        self.assertNotIn("classification.completed", [r["event"] for r in records])
-        self.assertEqual(records[-1]["stage"], "classification.persistence")
+        self.assertIn("classification.completed", [r["event"] for r in records])
         self.assertNotIn("PRIVATE SQL PARAMS", json.dumps(records))
 
     async def test_classification_batch_reports_size_without_texts(self):
