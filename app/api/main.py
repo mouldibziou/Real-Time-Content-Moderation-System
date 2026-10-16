@@ -39,15 +39,22 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         configure_logging("api")
-        runtime = ApplicationRuntime(
-            settings=settings,
-            services_builder=services_builder
-        )
-        runtime.start()
+        remote = settings.inference_backend == "triton"
+        if remote:
+            from app.triton_runtime import TritonRuntime
+        runtime = TritonRuntime(settings) if remote else ApplicationRuntime(
+            settings=settings, services_builder=services_builder)
+        if remote:
+            await runtime.start()
+        else:
+            runtime.start()
         try:
             runtime_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="runtime")
         except Exception:
-            runtime.stop()
+            if remote:
+                await runtime.stop()
+            else:
+                runtime.stop()
             raise
 
         # runtime and executor should be published after runtime success
@@ -93,7 +100,10 @@ def create_app(
                 await asyncio.to_thread(metrics_server.shutdown)
                 metrics_server.server_close()
                 await asyncio.to_thread(metrics_thread.join)
-            runtime.stop()
+            if remote:
+                await runtime.stop()
+            else:
+                runtime.stop()
             runtime_executor.shutdown(wait=True, cancel_futures=True)
             await close_redis()
             await engine.dispose() # We await because it returns a coroutine

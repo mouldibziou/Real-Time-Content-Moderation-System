@@ -99,6 +99,8 @@ async def get_readiness(
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
 ):
     is_ready = runtime.is_ready()
+    if is_ready and getattr(runtime, "remote_inference", False) is True:
+        is_ready = await runtime.check_ready()
     if is_ready:
         async def check_database():
             async with async_session() as session:

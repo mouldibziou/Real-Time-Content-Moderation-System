@@ -1,6 +1,7 @@
 # Monitoring images package the tested scrape configuration and dashboard.
 FROM prom/prometheus:v3.15.0 AS prometheus
 COPY monitoring/prometheus.yml /etc/prometheus/prometheus.yml
+COPY monitoring/prometheus.triton.yml /etc/prometheus/prometheus.triton.yml
 
 FROM grafana/grafana:13.2.2 AS grafana
 COPY monitoring/grafana/provisioning/ /etc/grafana/provisioning/

@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import Request
 from app.runtime import ApplicationRuntime
@@ -65,6 +66,8 @@ async def _call_runtime(
     preserves server concurrency.
     """
     bound_func = partial(func, *args, **kwargs)
+    if inspect.iscoroutinefunction(func):
+        return await bound_func()
     loop = asyncio.get_running_loop()
     # Executor submissions do not propagate contextvars automatically.
     metrics = current_api_metrics()

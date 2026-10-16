@@ -227,7 +227,7 @@ class BackendSettingsTests(TestCase):
         self.assertEqual(settings.onnx_providers, ("CPUExecutionProvider",))
 
     def test_invalid_backend_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "either 'torch' or 'onnx'"):
+        with self.assertRaisesRegex(ValueError, "Inference backend"):
             RuntimeSettings(device="cpu", inference_backend="tensorrt")
 
     def test_nonstring_backend_is_rejected(self):

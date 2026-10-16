@@ -1,0 +1,29 @@
+# NVIDIA distributes the CPU server and Python backend in its PyTriton wheel.
+# Only the bundled server is used: this runs a normal Triton model repository.
+FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
+ARG TARGETARCH
+RUN test "$TARGETARCH" = amd64
+COPY requirements/triton-server.txt /tmp/triton-server.txt
+RUN python3 -m pip install --no-cache-dir --no-deps --require-hashes --only-binary=:all: --target=/opt/triton-runtime -r /tmp/triton-server.txt && \
+    cp /opt/triton-runtime/pytriton/tritonserver/python_backend_stubs/3.12/triton_python_backend_stub /opt/triton-runtime/pytriton/tritonserver/backends/python/triton_python_backend_stub && \
+    chmod 0755 /opt/triton-runtime/pytriton/tritonserver/bin/tritonserver /opt/triton-runtime/pytriton/tritonserver/backends/python/triton_python_backend_stub
+COPY requirements/triton.txt /tmp/triton-requirements.txt
+RUN python3 -m pip install --no-cache-dir --require-hashes --only-binary=:all: -r /tmp/triton-requirements.txt
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
+    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 TOKENIZERS_PARALLELISM=false \
+    HF_HOME=/tmp/huggingface XDG_CACHE_HOME=/tmp/cache \
+    LD_LIBRARY_PATH=/usr/local/lib \
+    TRITON_BACKEND_DIRECTORY=/opt/triton-runtime/pytriton/tritonserver/backends \
+    PATH=/opt/triton-runtime/pytriton/tritonserver/bin:$PATH
+WORKDIR /opt/artifacts
+COPY --chmod=0644 models/distilbert/v2.0.0/config.json models/distilbert/v2.0.0/tokenizer.json models/distilbert/v2.0.0/tokenizer_config.json ./models/distilbert/v2.0.0/
+COPY --chmod=0644 models/distilbert/v2.0.0-onnx/model.onnx ./models/distilbert/v2.0.0-onnx/
+COPY docker/verify_artifacts.py docker/model-manifest.json /opt/verification/
+RUN python3 -c 'import json; from pathlib import Path; import sys; sys.path.insert(0,"/opt/verification"); from verify_artifacts import verify_artifacts; m=json.loads(Path("/opt/verification/model-manifest.json").read_text()); m["files"]=[x for x in m["files"] if not x["path"].endswith("model.safetensors")]; verify_artifacts(Path.cwd(),m)'
+COPY docker/triton/model_repository/toxicity/1/model.py /opt/triton-model/model.py
+COPY docker/triton/entrypoint.py docker/triton/healthcheck.py /opt/toxicity-triton/
+RUN find /opt/artifacts/models -type d -exec chmod 0755 {} +
+USER 10001:10001
+EXPOSE 8000 8002
+HEALTHCHECK --interval=10s --timeout=5s --start-period=120s --retries=5 CMD ["python3", "/opt/toxicity-triton/healthcheck.py"]
+ENTRYPOINT ["python3", "/opt/toxicity-triton/entrypoint.py"]

@@ -1,0 +1,6 @@
+# NVIDIA's bundled CPU Triton server binaries; installed with --no-deps because
+# the PyTriton Python framework is not used. Preserve its bundled libraries and
+# distribution licenses, and select its Python 3.12 backend stub explicitly.
+--index-url https://pypi.org/simple
+nvidia-pytriton==0.7.0 \
+    --hash=sha256:21f063ff93bb426d0c06b7a55e7eb9efcfe62c0dddd9a908e9877e18710128df

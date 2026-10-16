@@ -89,4 +89,10 @@ HEALTHCHECK NONE
 CMD ["python", "-m", "app.worker"]
 
 # A plain docker build produces the API; the worker is an explicit target.
+FROM application AS triton-api
+USER root
+COPY requirements/triton-client.txt /tmp/triton-client.txt
+RUN python -m pip install --require-hashes --only-binary=:all: -r /tmp/triton-client.txt && python -m pip check
+USER 10001:10001
+
 FROM application AS runtime

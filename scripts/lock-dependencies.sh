@@ -14,7 +14,7 @@ esac
 
 # Serving must resolve first: migrations constrain shared packages against its
 # lock. Training and export are standalone environments with shared constraints.
-for group in serving migrations training export development; do
+for group in serving migrations training export development triton-client triton; do
     if [ "$group" = serving ]; then
         output=requirements.txt
     else

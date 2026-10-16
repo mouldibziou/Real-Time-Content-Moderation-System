@@ -1,0 +1,6 @@
+# Triton 2.51 Python bindings require NumPy 1.x. Model and tokenizer pins
+# match the API; only this container uses the compatibility NumPy version.
+-c triton-constraints.in
+numpy==1.26.4
+onnxruntime==1.30.0
+transformers==4.57.6

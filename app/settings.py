@@ -29,6 +29,8 @@ class RuntimeSettings:
     inference_backend: str = "onnx"
     onnx_model_dir: Path = Path("models/distilbert/v2.0.0-onnx")
     onnx_providers: tuple[str, ...] = ("CPUExecutionProvider",)
+    triton_url: str = "http://triton:8000"
+    triton_max_inflight: int = 32
 
     """
     NOTE: the below values are provisional defaults, they will be altered accordingly with maximum acceptable latency.
@@ -109,8 +111,16 @@ class RuntimeSettings:
             raise ValueError("Classification burst limit must be positive")
         if not isinstance(self.inference_backend, str):
             raise TypeError("Inference backend must be a string")
-        if self.inference_backend not in ("torch", "onnx"):
-            raise ValueError("Inference backend must be either 'torch' or 'onnx'")
+        if self.inference_backend not in ("torch", "onnx", "triton"):
+            raise ValueError("Inference backend must be 'torch', 'onnx', or 'triton'")
+        from urllib.parse import urlsplit
+        url = urlsplit(self.triton_url)
+        if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ("", "/"):
+            raise ValueError("Triton URL must be an HTTP(S) origin without credentials")
+        if type(self.triton_max_inflight) is not int or self.triton_max_inflight < 1:
+            raise ValueError("Triton maximum inflight requests must be a positive integer")
+        if self.inference_backend == "triton" and self.device != "cpu":
+            raise ValueError("The Triton classification deployment currently supports CPU only")
         if not isinstance(self.onnx_model_dir, Path):
             raise TypeError("ONNX model directory must be a pathlib.Path")
         if not isinstance(self.onnx_providers, (tuple, list)) or not self.onnx_providers:
@@ -135,6 +145,8 @@ def load_runtime_settings(environ: Mapping[str, str] | None = None) -> RuntimeSe
         ("TOXICITY_INFERENCE_BACKEND", "inference_backend", str),
         ("TOXICITY_MODEL_DIR", "model_dir", Path),
         ("TOXICITY_ONNX_MODEL_DIR", "onnx_model_dir", Path),
+        ("TOXICITY_TRITON_URL", "triton_url", str),
+        ("TOXICITY_TRITON_MAX_INFLIGHT", "triton_max_inflight", int),
     ):
         if variable in environment:
             value = environment[variable]

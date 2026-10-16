@@ -1,0 +1,66 @@
+# Opt-in overlay after compose.yaml or compose.cloud.yaml; base files retain ONNX.
+services:
+  prometheus:
+    platform: linux/amd64
+    image: ${IMAGE_PREFIX:-toxicity}-prometheus:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.monitoring
+      target: prometheus
+      platforms: [linux/amd64]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.triton.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-15d}
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-1GB}
+    ports: ["127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"]
+    volumes: ["prometheus_data:/prometheus"]
+    networks: [svc]
+
+  api:
+    build:
+      target: triton-api
+    environment:
+      TOXICITY_INFERENCE_BACKEND: triton
+      TOXICITY_TRITON_URL: http://triton:8000
+      TOXICITY_TRITON_MAX_INFLIGHT: ${TRITON_API_MAX_INFLIGHT:-32}
+      TOXICITY_INFERENCE_BATCH_SIZE: ${API_INFERENCE_BATCH_SIZE:-8}
+    depends_on:
+      triton:
+        condition: service_healthy
+
+  triton:
+    platform: linux/amd64
+    image: ${IMAGE_PREFIX:-toxicity}-triton:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.triton
+      platforms: [linux/amd64]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp:rw,nosuid,noexec,size=256m"]
+    shm_size: 128m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 75s
+    networks: [svc]
+    expose: ["8000", "8002"]
+    environment:
+      TRITON_MAX_BATCH_SIZE: ${API_INFERENCE_BATCH_SIZE:-8}
+      TRITON_CPU_THREADS: ${TRITON_CPU_THREADS:-1}
+      TRITON_QUEUE_DELAY_US: ${TRITON_QUEUE_DELAY_US:-0}
+      TRITON_QUEUE_CAPACITY: ${TRITON_QUEUE_CAPACITY:-64}
+      TRITON_QUEUE_TIMEOUT_US: ${TRITON_QUEUE_TIMEOUT_US:-1000000}
+    deploy:
+      resources:
+        limits:
+          memory: ${TRITON_MEMORY:-2G}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  prometheus_data:
