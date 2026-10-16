@@ -1,13 +1,15 @@
 from typing import Callable
 from logging import getLogger
 import logging
+import asyncio
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
-from prometheus_client import CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, start_http_server
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -23,7 +25,7 @@ from app.errors import (
 from app.db.engine import engine
 from app.db.queue import close_redis
 from app.observability import configure_logging, log_event, RequestLoggingMiddleware
-from app.metrics import ApiMetrics, MetricsMiddleware, read_queue_counts, render_api_metrics
+from app.metrics import ApiMetrics, MetricsMiddleware, read_queue_counts, render_api_metrics, api_export_registry, refresh_queue_metrics
 
 def create_app(
         settings: RuntimeSettings,
@@ -70,9 +72,27 @@ def create_app(
         except Exception:
             log_event(logger, "database.unavailable", level=logging.WARNING, exc_info=True)
 
+        metrics_server = metrics_thread = queue_task = None
         try:
+            port = int(os.getenv("API_METRICS_PORT", "0"))
+            if not 0 <= port <= 65535:
+                raise ValueError("API_METRICS_PORT must be between 0 and 65535")
+            if port:
+                metrics_server, metrics_thread = start_http_server(
+                    port, addr=os.getenv("API_METRICS_HOST", "0.0.0.0"),
+                    registry=api_export_registry(metrics, metrics.queue_counts))
+                queue_task = asyncio.create_task(refresh_queue_metrics(metrics))
+                log_event(logger, "metrics.server_started", port=port)
             yield
         finally:
+            if queue_task is not None:
+                queue_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await queue_task
+            if metrics_server is not None:
+                await asyncio.to_thread(metrics_server.shutdown)
+                metrics_server.server_close()
+                await asyncio.to_thread(metrics_thread.join)
             runtime.stop()
             runtime_executor.shutdown(wait=True, cancel_futures=True)
             await close_redis()

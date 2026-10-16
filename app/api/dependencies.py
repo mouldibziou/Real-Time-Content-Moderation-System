@@ -5,6 +5,7 @@ from app.runtime import ApplicationRuntime
 from app.errors import RuntimeNotReadyError
 from functools import partial
 from contextvars import copy_context
+from app.metrics import current_api_metrics
 
 """
 For learning purposes:
@@ -56,7 +57,7 @@ async def _call_runtime(
     status, no other requests until they return.
 
     This helper hands the blocking call to the dedicated single-worker pool
-    via loop.run_in_executor and awaits the future. Awaiting suspends only
+    via an executor submission and awaits its wrapped future. Awaiting suspends only
     this request's coroutine and gives the loop back, so fast paths stay
     responsive while the pool thread runs inference.
 
@@ -65,5 +66,25 @@ async def _call_runtime(
     """
     bound_func = partial(func, *args, **kwargs)
     loop = asyncio.get_running_loop()
-    # run_in_executor does not propagate contextvars automatically.
-    return await loop.run_in_executor(executor, copy_context().run, bound_func)
+    # Executor submissions do not propagate contextvars automatically.
+    metrics = current_api_metrics()
+    ticket = metrics.classification_ticket() if metrics is not None else None
+
+    def execute():
+        if ticket is not None:
+            ticket.start()
+        try:
+            return bound_func()
+        finally:
+            if ticket is not None:
+                ticket.finish()
+
+    try:
+        future = executor.submit(copy_context().run, execute)
+    except BaseException:
+        if ticket is not None:
+            ticket.cancelled()
+        raise
+    if ticket is not None:
+        future.add_done_callback(lambda completed: ticket.cancelled() if completed.cancelled() else None)
+    return await asyncio.wrap_future(future, loop=loop)

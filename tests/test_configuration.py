@@ -22,6 +22,7 @@ class RuntimeConfigurationTests(TestCase):
         self.assertEqual(settings, RuntimeSettings())
         self.assertEqual(settings.device, "cpu")
         self.assertEqual(settings.inference_backend, "onnx")
+        self.assertEqual(settings.inference_batch_size, 4)
         self.assertEqual(settings.model_dir, Path("models/distilbert/v2.0.0"))
         self.assertEqual(settings.onnx_model_dir, Path("models/distilbert/v2.0.0-onnx"))
 
@@ -31,11 +32,13 @@ class RuntimeConfigurationTests(TestCase):
             "TOXICITY_INFERENCE_BACKEND": "torch",
             "TOXICITY_MODEL_DIR": "/opt/model release/torch",
             "TOXICITY_ONNX_MODEL_DIR": "/opt/model release/onnx",
+            "TOXICITY_INFERENCE_BATCH_SIZE": "8",
         })
         self.assertEqual(settings.device, "cuda:1")
         self.assertEqual(settings.inference_backend, "torch")
         self.assertEqual(settings.model_dir, Path("/opt/model release/torch"))
         self.assertEqual(settings.onnx_model_dir, Path("/opt/model release/onnx"))
+        self.assertEqual(settings.inference_batch_size, 8)
         self.assertEqual(settings.labels, RuntimeSettings().labels)
         self.assertEqual(settings.thresholds, RuntimeSettings().thresholds)
 
@@ -51,11 +54,20 @@ class RuntimeConfigurationTests(TestCase):
 
     def test_blank_values_are_rejected_with_variable_name(self):
         for variable in ("TOXICITY_DEVICE", "TOXICITY_INFERENCE_BACKEND",
-                         "TOXICITY_MODEL_DIR", "TOXICITY_ONNX_MODEL_DIR"):
+                         "TOXICITY_MODEL_DIR", "TOXICITY_ONNX_MODEL_DIR",
+                         "TOXICITY_INFERENCE_BATCH_SIZE"):
             for value in ("", " ", "\t\n"):
                 with self.subTest(variable=variable, value=value):
                     with self.assertRaisesRegex(ValueError, variable):
                         load_runtime_settings({variable: value})
+
+    def test_invalid_inference_batch_sizes_are_rejected(self):
+        for value in ("0", "-1", "1.5", "eight"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                load_runtime_settings({"TOXICITY_INFERENCE_BATCH_SIZE": value})
+        for value in (0, -1, True, 2.5, "8", None):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "Inference batch size"):
+                RuntimeSettings(inference_batch_size=value)
 
     def test_invalid_backends_are_rejected(self):
         for value in ("tensorrt", "ONNX", " onnx "):

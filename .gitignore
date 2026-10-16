@@ -10,3 +10,6 @@ __pycache__/
 *.pyd
 .env
 .env.docker
+.env.ec2
+.env.cloud
+certs/

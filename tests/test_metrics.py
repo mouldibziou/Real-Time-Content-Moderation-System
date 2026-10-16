@@ -240,3 +240,135 @@ class JobMetricsTests(IsolatedAsyncioTestCase):
                 await recover_jobs(session)
             self.assertEqual(await read_queue_counts(), {"queued": 1, "running": 0})
             self.assertEqual(metrics.registry.get_sample_value("explanation_job_outcomes_total", {"outcome": "retry"}), 1)
+
+class ClassificationQueueMetricsTests(IsolatedAsyncioTestCase):
+    asyncSetUp = logging_tests.ApiWorkflowLoggingTests.asyncSetUp
+    asyncTearDown = logging_tests.ApiWorkflowLoggingTests.asyncTearDown
+    sample = ApiMetricsTests.sample
+
+    async def test_executor_queue_is_visible_and_cancelling_queued_call_removes_it(self):
+        from threading import Event
+        entered, release = Event(), Event()
+        prediction = self.runtime.predict.return_value
+
+        def blocked(text):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("Test inference was not released")
+            return prediction
+
+        self.runtime.predict.side_effect = blocked
+        first = second = None
+        try:
+            with patch("app.api.routes.save_classification", AsyncMock(return_value=uuid4())):
+                first = asyncio.create_task(self.client.post("/v1/classify", json={"text": "first"}))
+                self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                second = asyncio.create_task(self.client.post("/v1/classify", json={"text": "second"}))
+                await asyncio.sleep(.02)
+                self.assertEqual(self.sample("classification_requests_current", {"state": "running"}), 1)
+                self.assertEqual(self.sample("classification_requests_current", {"state": "queued"}), 1)
+                second.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await second
+                await asyncio.sleep(0)
+                self.assertEqual(self.sample("classification_requests_current", {"state": "queued"}), 0)
+                self.assertEqual(self.sample("classification_requests_current", {"state": "running"}), 1)
+                release.set()
+                self.assertEqual((await first).status_code, 200)
+                self.assertEqual(self.sample("classification_requests_current", {"state": "running"}), 0)
+        finally:
+            release.set()
+            await asyncio.gather(*[t for t in (first, second) if t is not None], return_exceptions=True)
+
+    async def test_cancelling_running_waiter_does_not_hide_active_model_work(self):
+        from threading import Event
+        entered, release, finished = Event(), Event(), Event()
+        prediction = self.runtime.predict.return_value
+
+        def blocked(text):
+            entered.set()
+            try:
+                if not release.wait(5):
+                    raise TimeoutError("Test inference was not released")
+                return prediction
+            finally:
+                finished.set()
+
+        self.runtime.predict.side_effect = blocked
+        task = asyncio.create_task(self.client.post("/v1/classify", json={"text": "first"}))
+        try:
+            self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertEqual(self.sample("classification_requests_current", {"state": "running"}), 1)
+            release.set()
+            self.assertTrue(await asyncio.to_thread(finished.wait, 2))
+            # The executor's finally block follows the model callback's finally.
+            await asyncio.to_thread(self.executor.submit(lambda: None).result)
+            self.assertEqual(self.sample("classification_requests_current", {"state": "running"}), 0)
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def test_submission_failure_does_not_leave_a_phantom_queue_entry(self):
+        self.executor.shutdown(wait=True)
+        response = await self.client.post("/v1/classify", json={"text": "first"})
+        self.assertEqual(response.status_code, 500)
+        for state in ("queued", "running"):
+            self.assertEqual(self.sample("classification_requests_current", {"state": state}), 0)
+
+
+class ApiExporterSnapshotTests(TestCase):
+    def test_cached_database_failure_keeps_in_memory_metrics_available(self):
+        from app.metrics import api_export_registry
+        metrics = ApiMetrics()
+        metrics.items.inc(5)
+        metrics.set_queue_counts({"queued": 7, "running": 2})
+        registry = api_export_registry(metrics, metrics.queue_counts)
+        self.assertIn(b'explanation_jobs_current{status="queued"} 7.0', generate_latest(registry))
+        metrics.set_queue_counts(None)
+        output = generate_latest(registry)
+        self.assertIn(b'classification_items_total 5.0', output)
+        self.assertIn(b'explanation_queue_collection_success 0.0', output)
+        self.assertNotIn(b'explanation_jobs_current', output)
+        self.assertIn(b'classification_requests_current{state="queued"} 0.0', output)
+
+class ApiMetricsServerLifecycleTests(IsolatedAsyncioTestCase):
+    async def test_lifespan_serves_cached_queue_metrics_and_closes_server(self):
+        from prometheus_client import start_http_server as real_start
+        from urllib.request import urlopen
+        from app.api.main import create_app
+        from app.services import ApplicationServices
+        from app.settings import RuntimeSettings
+        from tests.factories import make_model_info
+        servers = []
+
+        def start(port, **kwargs):
+            pair = real_start(0, addr="127.0.0.1", registry=kwargs['registry'])
+            servers.append(pair)
+            return pair
+
+        engine = Mock()
+        engine.connect.side_effect = OSError("test connection unavailable")
+        engine.dispose = AsyncMock()
+        services = ApplicationServices(Mock(), Mock(), model_info=make_model_info())
+        app = create_app(RuntimeSettings(device="cpu"), services_builder=lambda settings: services)
+        with patch.dict(os.environ, {"API_METRICS_PORT": "9100"}), \
+                patch("app.api.main.engine", engine), \
+                patch("app.api.main.start_http_server", side_effect=start), \
+                patch("app.metrics.read_queue_counts", AsyncMock(return_value={"queued": 2, "running": 1})):
+            async with app.router.lifespan_context(app):
+                await asyncio.sleep(0)
+                server, thread = servers[0]
+
+                def fetch():
+                    with urlopen(f"http://127.0.0.1:{server.server_port}/metrics/", timeout=3) as r:
+                        return r.read()
+
+                output = await asyncio.to_thread(fetch)
+                self.assertIn(b'explanation_jobs_current{status="queued"} 2.0', output)
+                self.assertIn(b'classification_requests_current{state="queued"} 0.0', output)
+                self.assertTrue(thread.is_alive())
+            self.assertFalse(thread.is_alive())
+            engine.dispose.assert_awaited_once()

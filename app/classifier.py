@@ -22,8 +22,12 @@ class ToxicityClassifier:
             thresholds,
             labels,
             device,
-            max_length
+            max_length,
+            inference_batch_size: int = 4,
     ):
+        if type(inference_batch_size) is not int or inference_batch_size < 1:
+            raise ValueError("Inference batch size must be a positive integer")
+        self.inference_batch_size = inference_batch_size
         self.model = model
         self.labels = labels
         self.device = device
@@ -78,8 +82,8 @@ class ToxicityClassifier:
     def predict_batch(self, texts:list[str]) -> list[ClassificationResult]:
         # Bound model activations independently of the public request batch size.
         results = []
-        for offset in range(0, len(texts), 4):
-            results.extend(self._predict_batch(texts[offset:offset + 4]))
+        for offset in range(0, len(texts), self.inference_batch_size):
+            results.extend(self._predict_batch(texts[offset:offset + self.inference_batch_size]))
         return results
 
     def _predict_batch(self, texts:list[str]) -> list[ClassificationResult]:
@@ -141,8 +145,12 @@ class ToxicityOnnxClassifier:
             tokenizer,
             thresholds,
             labels,
-            max_length
+            max_length,
+            inference_batch_size: int = 4,
     ):
+        if type(inference_batch_size) is not int or inference_batch_size < 1:
+            raise ValueError("Inference batch size must be a positive integer")
+        self.inference_batch_size = inference_batch_size
         self.session = session
         self.labels = labels
         self.max_length = max_length
@@ -192,8 +200,8 @@ class ToxicityOnnxClassifier:
 
     def predict_batch(self, texts:list[str]) -> list[ClassificationResult]:
         results = []
-        for offset in range(0, len(texts), 4):
-            results.extend(self._predict_batch(texts[offset:offset + 4]))
+        for offset in range(0, len(texts), self.inference_batch_size):
+            results.extend(self._predict_batch(texts[offset:offset + self.inference_batch_size]))
         return results
 
     def _predict_batch(self, texts:list[str]) -> list[ClassificationResult]:

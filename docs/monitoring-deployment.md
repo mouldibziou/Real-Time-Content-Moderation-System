@@ -1,5 +1,47 @@
 # Build and deploy the five-service stack
 
+For the current AWS deployment, use this file alone with managed RDS PostgreSQL
+and node-based ElastiCache Redis OSS (cluster mode disabled). `compose.ec2.yaml`
+is an alternative for self-hosted databases and is not part of that deployment.
+
+## AWS managed connections
+
+On EC2, copy the downloaded RDS CA bundle to `certs/postgres-ca.pem`. Make the
+directory mode 755 and certificate mode 644: certificates are public data, and
+the containers run as UID 10001, not the SSH user. The certificate directory is
+mounted read-only. `POSTGRES_CA_PATH=/opt/app/certs/postgres-ca.pem` becomes
+`PGSSLROOTCERT` for both the async application driver and sync migration driver.
+Use `sslmode=verify-full` in `DATABASE_URL`; the application's URL helper converts
+it to the equivalent asyncpg option. Do not add `sslrootcert` to the URL: SQLAlchemy
+passes URL query arguments as connection keywords, which asyncpg does not accept
+for this option.
+
+Run `scripts/configure-managed-env.py` from the deployment directory with
+`--database-host` and `--redis-host`. It asks for the application-role password
+and Redis AUTH password privately, URL-encodes them, and writes `.env.cloud` with
+mode 600 without printing secrets. Existing output files are never overwritten.
+It preserves the previously generated Grafana password from `.env.ec2` when
+available. That previous file's Docker database credentials are not used.
+
+The Redis URL uses `rediss`, required certificate and hostname verification, and
+the certifi CA bundle in the existing Python 3.12 serving images. Those settings
+match the container-based Redis connection check. No image rebuild is needed.
+Keep env files private; resolved `docker compose config` output contains secrets,
+so use `config --quiet` for validation.
+
+```sh
+docker compose --env-file .env.cloud -f compose.cloud.yaml config --quiet
+docker compose --env-file .env.cloud -f compose.cloud.yaml up -d --no-build --pull never
+```
+
+All five services rotate their Docker stdout/stderr logs into three 10 MB files
+per container. Logs remain local to EC2 unless a separate log collector is set up.
+`API_LIMIT_CONCURRENCY` defaults to 64 and is mapped by Compose to Uvicorn's
+`UVICORN_LIMIT_CONCURRENCY`. This limits concurrent admitted connections/tasks,
+not inference throughput; model inference remains on the single executor.
+The optional certificate directory and empty default `POSTGRES_CA_PATH` also let
+non-TLS development connections continue to use this configuration.
+
 `compose.cloud.yaml` now defines these images, all built for Linux amd64:
 
 | Service | Default image | Purpose |

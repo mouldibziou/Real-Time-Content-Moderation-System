@@ -56,6 +56,7 @@ RUN find models -type d -exec chmod 0755 {} +
 
 ENV TOXICITY_DEVICE=cpu \
     TOXICITY_INFERENCE_BACKEND=onnx \
+    API_METRICS_PORT=9100 \
     TOXICITY_MODEL_DIR=/opt/app/models/distilbert/v2.0.0 \
     TOXICITY_ONNX_MODEL_DIR=/opt/app/models/distilbert/v2.0.0-onnx \
     HF_HUB_OFFLINE=1 \
@@ -64,12 +65,12 @@ ENV TOXICITY_DEVICE=cpu \
     MPLCONFIGDIR=/tmp/matplotlib \
     XDG_CACHE_HOME=/tmp/cache \
     HF_HOME=/tmp/huggingface \
-    UVICORN_LIMIT_CONCURRENCY=16 \
+    UVICORN_LIMIT_CONCURRENCY=64 \
     UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN=60
 
 USER 10001:10001
 RUN python docker/verify_artifacts.py
-EXPOSE 8000
+EXPOSE 8000 9100
 STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
     CMD ["python", "/opt/app/docker/healthcheck.py"]

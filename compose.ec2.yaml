@@ -1,0 +1,110 @@
+# Single-host deployment overlay. Use after compose.cloud.yaml with .env.ec2.
+# Application images are transferred/pulled, not built on the EC2 host.
+name: toxicity-ec2
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:16-alpine
+    platform: linux/amd64
+    restart: unless-stopped
+    stop_grace_period: 60s
+    networks: [svc]
+    environment:
+      POSTGRES_USER: toxicity
+      POSTGRES_DB: toxicity
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate .env.ec2 first}
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U toxicity -d toxicity"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    platform: linux/amd64
+    restart: unless-stopped
+    stop_grace_period: 30s
+    networks: [svc]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Generate .env.ec2 first}
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD:?Generate .env.ec2 first}
+      - --maxmemory
+      - 96mb
+      - --maxmemory-policy
+      - noeviction
+    volumes: ["redisdata:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *logging
+
+  migrate:
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *logging
+
+  api:
+    environment:
+      TOXICITY_CPU_THREADS: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging: *logging
+
+  worker:
+    environment:
+      TOXICITY_CPU_THREADS: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging: *logging
+
+  prometheus:
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *logging
+
+  grafana:
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    logging: *logging
+
+volumes:
+  pgdata:
+  redisdata:

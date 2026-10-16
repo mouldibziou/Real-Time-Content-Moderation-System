@@ -87,6 +87,23 @@ class OnnxClassifierTests(TestCase):
         for value in feed.values():
             self.assertEqual(value.dtype, np.int64)
 
+    def test_configured_batch_size_controls_actual_session_feeds(self):
+        texts = [str(index) for index in range(13)]
+        for size in (1, 2, 4, 8, 64):
+            with self.subTest(size=size):
+                session = FakeSession(LOGITS)
+                classifier = ToxicityOnnxClassifier(
+                    session=session, tokenizer=numpy_tokenizer,
+                    thresholds=THRESHOLDS, labels=LABELS, max_length=512,
+                    inference_batch_size=size,
+                )
+                results = classifier.predict_batch(texts)
+                self.assertEqual(len(results), len(texts))
+                self.assertEqual(
+                    [feed["input_ids"].shape[0] for feed in session.feeds],
+                    [min(size, len(texts) - offset) for offset in range(0, len(texts), size)],
+                )
+
     def test_chunked_batch_matches_individual_results_in_order(self):
         texts = [str(i) for i in range(13)]
         def logits(batch):
@@ -134,6 +151,44 @@ class OnnxClassifierTests(TestCase):
 
 
 class TorchTokenTypeIdsTests(TestCase):
+    def test_configured_batch_size_preserves_torch_predictions_and_order(self):
+        texts = [str(index) for index in range(13)]
+        for size in (1, 2, 4, 8, 64):
+            with self.subTest(size=size):
+                batches = []
+
+                def tokenizer(texts, **kwargs):
+                    texts = [texts] if isinstance(texts, str) else texts
+                    ids = torch.tensor([[int(text)] for text in texts])
+                    return {"input_ids": ids, "attention_mask": torch.ones_like(ids)}
+
+                def model(**kwargs):
+                    ids = kwargs["input_ids"]
+                    batches.append(ids.shape[0])
+                    return SimpleNamespace(logits=ids.float().repeat(1, len(LABELS)))
+
+                classifier = ToxicityClassifier(
+                    model=model, tokenizer=tokenizer, thresholds=THRESHOLDS,
+                    labels=LABELS, device=torch.device("cpu"), max_length=512,
+                    inference_batch_size=size,
+                )
+                actual = classifier.predict_batch(texts)
+                self.assertEqual(batches, [min(size, len(texts) - offset)
+                                          for offset in range(0, len(texts), size)])
+                self.assertEqual(actual, [classifier.predict(text) for text in texts])
+
+    def test_classifiers_reject_invalid_batch_sizes(self):
+        for classifier_type, kwargs in (
+            (ToxicityClassifier, {"model": Mock(), "device": torch.device("cpu")}),
+            (ToxicityOnnxClassifier, {"session": FakeSession(LOGITS)}),
+        ):
+            for value in (0, -1, True, 2.5, "8", None):
+                with self.subTest(classifier=classifier_type, value=value):
+                    with self.assertRaisesRegex(ValueError, "Inference batch size"):
+                        classifier_type(tokenizer=Mock(), thresholds=THRESHOLDS,
+                                        labels=LABELS, max_length=512,
+                                        inference_batch_size=value, **kwargs)
+
     def test_torch_classifier_drops_token_type_ids(self):
         received = {}
 

@@ -9,9 +9,18 @@ x-application: &application
   security_opt: ["no-new-privileges:true"]
   stop_grace_period: 75s
   networks: [svc]
+  volumes:
+    - ${POSTGRES_CA_DIRECTORY:-./certs}:/opt/app/certs:ro
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 x-environment: &environment
   DATABASE_URL: ${DATABASE_URL:?Set the managed PostgreSQL URL}
+  PGSSLROOTCERT: ${POSTGRES_CA_PATH:-}
   REDIS_URL: ${REDIS_URL:?Set the managed Redis URL}
   EXPLAIN_QUEUE_KEY: ${EXPLAIN_QUEUE_KEY:-expl_jobs}
   MODEL_VERSION: v2.0.0
@@ -33,18 +42,27 @@ services:
     security_opt: ["no-new-privileges:true"]
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set the managed PostgreSQL URL}
+      PGSSLROOTCERT: ${POSTGRES_CA_PATH:-}
+    volumes:
+      - ${POSTGRES_CA_DIRECTORY:-./certs}:/opt/app/certs:ro
     networks: [svc]
+    logging: *logging
 
   api:
     <<: *application
+    logging: *logging
     image: ${IMAGE_PREFIX:-toxicity}-api:${IMAGE_TAG:-latest}
     build:
       context: .
       target: runtime
       platforms: ["linux/amd64"]
+    expose: ["9100"]
     environment:
+      API_METRICS_PORT: "9100"
+      UVICORN_LIMIT_CONCURRENCY: ${API_LIMIT_CONCURRENCY:-64}
       <<: *environment
       TOXICITY_CPU_THREADS: ${API_CPU_THREADS:-0}
+      TOXICITY_INFERENCE_BATCH_SIZE: ${API_INFERENCE_BATCH_SIZE:-4}
     ports: ["${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"]
     depends_on:
       migrate:
@@ -57,6 +75,7 @@ services:
 
   worker:
     <<: *application
+    logging: *logging
     image: ${IMAGE_PREFIX:-toxicity}-worker:${IMAGE_TAG:-latest}
     build:
       context: .
@@ -79,6 +98,7 @@ services:
           memory: ${WORKER_MEMORY:-3G}
 
   prometheus:
+    logging: *logging
     platform: linux/amd64
     image: ${IMAGE_PREFIX:-toxicity}-prometheus:${IMAGE_TAG:-latest}
     build:
@@ -97,6 +117,7 @@ services:
     networks: [svc]
 
   grafana:
+    logging: *logging
     platform: linux/amd64
     image: ${IMAGE_PREFIX:-toxicity}-grafana:${IMAGE_TAG:-latest}
     build:

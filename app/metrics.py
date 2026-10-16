@@ -2,8 +2,9 @@
 import asyncio
 from contextvars import ContextVar
 import logging
+from threading import Lock
 
-from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
 from prometheus_client.core import GaugeMetricFamily
 
 from app.observability import log_event
@@ -18,6 +19,13 @@ logger = logging.getLogger(__name__)
 class ApiMetrics:
     def __init__(self):
         self.registry = CollectorRegistry()
+        self.classification_requests = Gauge(
+            "classification_requests_current", "Accepted classification calls waiting for or executing model inference; batches count as one call.",
+            ("state",), registry=self.registry)
+        for state in ("queued", "running"):
+            self.classification_requests.labels(state)
+        self._queue_lock = Lock()
+        self._queue_counts = None
         self.requests = Counter("http_requests_total", "Completed HTTP requests, including error responses.",
                                 ("method", "route", "status_code"), registry=self.registry)
         self.duration = Histogram("http_request_duration_seconds", "Application request handling duration in seconds.",
@@ -34,12 +42,58 @@ class ApiMetrics:
         self.cache_hits = Counter("explanation_cache_hits_total", "Cached explanation results served by this API process.",
                                   registry=self.registry)
 
+    def set_queue_counts(self, counts):
+        with self._queue_lock:
+            self._queue_counts = counts
+
+    def queue_counts(self):
+        with self._queue_lock:
+            return self._queue_counts
+
+    def classification_ticket(self):
+        return ClassificationTicket(self)
+
     def record_predictions(self, results):
         self.items.inc(len(results))
         for result in results:
             for label, prediction in result.labels.items():
                 if label in LABELS:
                     self.predictions.labels(label, "positive" if prediction.predicted else "negative").inc()
+
+
+class ClassificationTicket:
+    """Track the actual executor queue, including cancellation and submission failure."""
+    def __init__(self, metrics):
+        self.gauge = metrics.classification_requests
+        self.lock = Lock()
+        self.state = "queued"
+        self.gauge.labels("queued").inc()
+
+    def start(self):
+        with self.lock:
+            self.gauge.labels("queued").dec()
+            self.gauge.labels("running").inc()
+            self.state = "running"
+
+    def finish(self):
+        with self.lock:
+            if self.state != "finished":
+                self.gauge.labels(self.state).dec()
+                self.state = "finished"
+
+    def cancelled(self):
+        # Cancelling the waiter does not stop an inference already executing.
+        with self.lock:
+            if self.state == "queued":
+                self.gauge.labels("queued").dec()
+                self.state = "finished"
+
+
+async def refresh_queue_metrics(metrics, interval=5):
+    """Refresh database-backed gauges outside the dedicated scrape thread."""
+    while True:
+        metrics.set_queue_counts(await read_queue_counts())
+        await asyncio.sleep(interval)
 
 
 def current_api_metrics():
@@ -84,10 +138,11 @@ async def read_queue_counts():
         return None
 
 
-def render_api_metrics(metrics, queue_counts):
+def api_export_registry(metrics, get_queue_counts):
     class Snapshot:
         def collect(self):
             yield from metrics.registry.collect()
+            queue_counts = get_queue_counts()
             success = GaugeMetricFamily("explanation_queue_collection_success", "Whether this scrape could read shared job state.")
             success.add_metric([], int(queue_counts is not None))
             yield success
@@ -98,7 +153,11 @@ def render_api_metrics(metrics, queue_counts):
                 yield queue
     registry = CollectorRegistry()
     registry.register(Snapshot())
-    return generate_latest(registry)
+    return registry
+
+
+def render_api_metrics(metrics, queue_counts):
+    return generate_latest(api_export_registry(metrics, lambda: queue_counts))
 
 
 class MetricsMiddleware:

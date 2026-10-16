@@ -90,7 +90,8 @@ class ModelInfoTests(TestCase):
 
     def test_builder_uses_loaded_model_type_and_resolved_device(self):
         settings = RuntimeSettings(device="cuda", labels=("a", "b"), thresholds=(0.2, 0.8),
-                                   max_length=128, n_steps=7, inference_backend="torch")
+                                   max_length=128, n_steps=7, inference_backend="torch",
+                                   inference_batch_size=2)
         resources = SimpleNamespace(
             model=SimpleNamespace(config=SimpleNamespace(model_type="distilbert")),
             tokenizer=object(), device=torch.device("cuda:1"), ort_session=None,
@@ -108,10 +109,11 @@ class ModelInfoTests(TestCase):
         self.assertIs(services.classifier, classifier.return_value)
         self.assertIs(services.explainer, explainer.return_value)
         self.assertIs(classifier.call_args.kwargs['model'], resources.model)
+        self.assertEqual(classifier.call_args.kwargs['inference_batch_size'], 2)
         self.assertIs(explainer.call_args.kwargs['model'], resources.model)
 
     def test_builder_wires_onnx_classifier_by_default(self):
-        settings = RuntimeSettings(device="cpu")
+        settings = RuntimeSettings(device="cpu", inference_batch_size=8)
         self.assertEqual(settings.inference_backend, "onnx")
         session = object()
         resources = SimpleNamespace(
@@ -126,6 +128,7 @@ class ModelInfoTests(TestCase):
         self.assertIs(services.explainer, explainer.return_value)
         self.assertIs(onnx_classifier.call_args.kwargs['session'], session)
         self.assertIs(onnx_classifier.call_args.kwargs['tokenizer'], resources.tokenizer)
+        self.assertEqual(onnx_classifier.call_args.kwargs['inference_batch_size'], 8)
         # The explainer always keeps the torch model, which ONNX cannot replace.
         self.assertIs(explainer.call_args.kwargs['model'], resources.model)
         self.assertEqual(services.model_info.inference_backend, "onnx")

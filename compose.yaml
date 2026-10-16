@@ -71,7 +71,10 @@ services:
       platforms: ["linux/amd64"]
     command: ["python", "-m", "uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--log-config", "/opt/app/docker/logging.json"]
     ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
+    expose: ["9100"]
     environment:
+      API_METRICS_PORT: "9100"
+      UVICORN_LIMIT_CONCURRENCY: ${API_LIMIT_CONCURRENCY:-64}
       DATABASE_URL: postgresql+asyncpg://toxicity:replace-me@db:5432/toxicity
       REDIS_URL: redis://redis:6379/0
       EXPLAIN_QUEUE_KEY: expl_jobs
@@ -79,6 +82,7 @@ services:
       TOXICITY_DEVICE: cpu
       TOXICITY_INFERENCE_BACKEND: onnx
       TOXICITY_CPU_THREADS: ${API_CPU_THREADS:-0}
+      TOXICITY_INFERENCE_BATCH_SIZE: ${API_INFERENCE_BATCH_SIZE:-4}
     depends_on:
       migrate:
         condition: service_completed_successfully

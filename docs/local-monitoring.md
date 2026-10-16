@@ -12,7 +12,7 @@ Open:
 
 - Dashboard: http://localhost:3000/d/toxicity-local
 - Prometheus targets: http://localhost:9090/targets — both targets should be UP.
-- Raw API measurements: http://localhost:8000/metrics/
+- Raw API measurements (manual inspection): http://localhost:8000/metrics/
 
 Grafana permits anonymous **viewing** locally, so the dashboard opens without a login. To administer Grafana, use `admin` / `local-demo-only`, or set `GRAFANA_ADMIN_PASSWORD` before the first startup. Grafana stores the initialized password in its volume; changing this environment variable afterward does not reset it.
 
@@ -47,3 +47,5 @@ Use the startup command again to resume. Adding `--volumes` to shutdown permanen
 Dashboard edits belong in `monitoring/grafana/dashboards/toxicity.json`; the provisioned dashboard is read-only in Grafana. These metrics describe application behavior. Host CPU and memory monitoring can be added separately when deploying.
 
 For the five deployable images and cloud Compose setup, see [monitoring-deployment.md](monitoring-deployment.md).
+
+Prometheus uses the private API metrics listener on port 9100 so API overload does not reject scrapes. The dashboard includes queued/running classification requests.

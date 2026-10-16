@@ -39,7 +39,8 @@ def build_services(settings: RuntimeSettings) -> ApplicationServices:
             tokenizer=tokenizer,
             thresholds=thresholds,
             max_length=max_length,
-            labels=labels
+            labels=labels,
+            inference_batch_size=settings.inference_batch_size,
         )
     else:
         classifier = ToxicityClassifier(
@@ -48,7 +49,8 @@ def build_services(settings: RuntimeSettings) -> ApplicationServices:
             thresholds=thresholds,
             device=device,
             max_length=max_length,
-            labels=labels
+            labels=labels,
+            inference_batch_size=settings.inference_batch_size,
         )
 
     explainer = ToxicityExplainer(

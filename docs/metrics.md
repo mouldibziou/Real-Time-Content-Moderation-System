@@ -100,7 +100,7 @@ scrape_configs:
   - job_name: toxicity_api
     metrics_path: /metrics/
     static_configs:
-      - targets: ["api:8000"]
+      - targets: ["api:9100"]
   - job_name: toxicity_worker
     metrics_path: /metrics/
     static_configs:
@@ -166,3 +166,35 @@ configuration validation passed for local and cloud configurations.
 ## Try the local dashboard
 
 See [Local Prometheus and Grafana](local-monitoring.md) for a ready-to-run Compose overlay, a provisioned dashboard, and synthetic traffic generation.
+
+## Scraping during load and classification queues
+
+Containers expose the API metrics on private port **9100**, using a separate
+Prometheus HTTP thread. Prometheus scrapes `api:9100/metrics/`; API port 8000 still
+provides `/metrics/` for manual inspection. The private listener avoids Uvicorn's
+HTTP concurrency guard, which can reject ordinary API requests (including the
+port-8000 metrics endpoint) with HTTP 503 under load. These pre-application
+rejections are not included in the application's HTTP request counters.
+
+The private listener reads database queue counts refreshed in the background,
+every five seconds after the preceding query finishes. Queries have a two-second
+timeout. A failed refresh exposes `explanation_queue_collection_success=0` and
+omits queue depth. The scrape itself never waits for a database connection.
+
+`classification_requests_current{state="queued|running"}` counts actual accepted
+classification calls waiting in the single-thread executor or executing model
+inference. Batches count as one call. It excludes database persistence and requests
+rejected before entering the application. Cancelling a queued call removes it;
+cancelling an in-progress waiter does not pretend the model work has stopped.
+This differs from `/v1/status`'s runtime queue, because executor submissions wait
+before entering the runtime's own scheduler.
+
+Prediction percentages reflect model decisions at their configured thresholds.
+Neutral load-test strings can correctly produce zero positive predictions. The
+dashboard uses two decimal places for small non-zero fractions and shows no
+prediction measurement before any inputs have been classified. Latency estimates
+remain absent when their recent observation window contains no requests/jobs;
+missing observations are not converted to zero latency.
+
+`API_METRICS_PORT=0` disables the separate listener for native tests. Containers
+set it to 9100; `API_METRICS_HOST` defaults to `0.0.0.0` on the private network.

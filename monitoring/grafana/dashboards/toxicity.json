@@ -9,7 +9,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "5s",
   "time": {
     "from": "now-15m",
@@ -43,7 +43,7 @@
         "defaults": {
           "unit": "short",
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
           "custom": {
             "fillOpacity": 12,
@@ -53,11 +53,31 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
               }
             ]
-          }
+          },
+          "noValue": "Unavailable",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -115,7 +135,8 @@
                 "value": null
               }
             ]
-          }
+          },
+          "noValue": "Unavailable"
         },
         "overrides": []
       },
@@ -173,7 +194,8 @@
                 "value": null
               }
             ]
-          }
+          },
+          "noValue": "Unavailable"
         },
         "overrides": []
       },
@@ -194,7 +216,7 @@
       "id": 4,
       "title": "Queue collection (1 = healthy)",
       "type": "stat",
-      "description": "",
+      "description": "Whether the latest background database query succeeded. Queue depth is omitted on failure, never replaced with a false zero.",
       "gridPos": {
         "x": 18,
         "y": 0,
@@ -231,6 +253,55 @@
                 "value": null
               }
             ]
+          },
+          "noValue": "Unavailable"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 15,
+      "title": "Current classification requests",
+      "type": "stat",
+      "description": "Accepted classification requests waiting in the executor or running model inference. A batch counts as one request. Excludes database persistence and HTTP requests rejected before reaching the application.",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "toxicity-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (state) (classification_requests_current{job=\"toxicity_api\"})",
+          "legendFormat": "{{state}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 0,
+          "noValue": "Unavailable",
+          "color": {
+            "mode": "palette-classic"
           }
         },
         "overrides": []
@@ -249,13 +320,28 @@
       }
     },
     {
+      "id": 16,
+      "title": "Reading these measurements",
+      "type": "text",
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 4
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Classifications:** queued = waiting for model inference; running = currently inferring. Batches count as one request.\n\n**Explanations:** durable background jobs waiting for or running on the worker.\n\n**0% positive** can be correct for neutral text. Latency is unavailable when no requests/jobs occurred in its recent window."
+      }
+    },
+    {
       "id": 5,
       "title": "HTTP requests per second",
       "type": "timeseries",
       "description": "Health checks and metrics scrapes are excluded. Route templates keep cardinality bounded.",
       "gridPos": {
         "x": 0,
-        "y": 4,
+        "y": 8,
         "w": 12,
         "h": 8
       },
@@ -308,10 +394,10 @@
       "id": 6,
       "title": "HTTP p95 latency",
       "type": "timeseries",
-      "description": "Application response latency, including database work. Async /explain measures submission, not job completion.",
+      "description": "Application response latency, including database work. Async /explain measures submission, not job completion. No recent requests/jobs means no latency estimate; zero is not substituted for missing observations.",
       "gridPos": {
         "x": 12,
-        "y": 4,
+        "y": 8,
         "w": 12,
         "h": 8
       },
@@ -345,7 +431,8 @@
                 "value": null
               }
             ]
-          }
+          },
+          "noValue": "No recent observations"
         },
         "overrides": []
       },
@@ -367,7 +454,7 @@
       "description": "Windowed counts are estimates between scrapes; the demo includes intentional validation errors (422).",
       "gridPos": {
         "x": 0,
-        "y": 12,
+        "y": 16,
         "w": 12,
         "h": 8
       },
@@ -422,10 +509,10 @@
       "id": 8,
       "title": "Positive predictions by label",
       "type": "bargauge",
-      "description": "Positive fraction since API start. One text can be positive for multiple labels.",
+      "description": "Positive share of successful classifications since API start, using model thresholds. Neutral load-test text can correctly yield 0%. Each label is independent. Empty before any classifications or while metrics are unavailable.",
       "gridPos": {
         "x": 12,
-        "y": 12,
+        "y": 16,
         "w": 12,
         "h": 8
       },
@@ -436,7 +523,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (label) (classification_predictions_total{job=\"toxicity_api\",decision=\"positive\"}) / clamp_min(sum by (label) (classification_predictions_total{job=\"toxicity_api\"}), 1)",
+          "expr": "sum by (label) (classification_predictions_total{job=\"toxicity_api\",decision=\"positive\"}) / (sum by (label) (classification_predictions_total{job=\"toxicity_api\"}) > 0)",
           "legendFormat": "{{label}}",
           "instant": true
         }
@@ -461,7 +548,9 @@
             ]
           },
           "min": 0,
-          "max": 1
+          "max": 1,
+          "decimals": 2,
+          "noValue": "No predictions / unavailable"
         },
         "overrides": []
       },
@@ -485,7 +574,7 @@
       "description": "",
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 24,
         "w": 12,
         "h": 4
       },
@@ -519,7 +608,8 @@
                 "value": null
               }
             ]
-          }
+          },
+          "noValue": "Unavailable"
         },
         "overrides": []
       },
@@ -543,7 +633,7 @@
       "description": "",
       "gridPos": {
         "x": 12,
-        "y": 20,
+        "y": 24,
         "w": 12,
         "h": 4
       },
@@ -577,7 +667,8 @@
                 "value": null
               }
             ]
-          }
+          },
+          "noValue": "Unavailable"
         },
         "overrides": []
       },
@@ -598,10 +689,10 @@
       "id": 11,
       "title": "First queue wait p95",
       "type": "timeseries",
-      "description": "Histogram estimate. Empty until jobs occur in the rate window; bucket boundaries limit precision.",
+      "description": "Histogram estimate. Empty until jobs occur in the rate window; bucket boundaries limit precision. No recent requests/jobs means no latency estimate; zero is not substituted for missing observations.",
       "gridPos": {
         "x": 0,
-        "y": 24,
+        "y": 28,
         "w": 12,
         "h": 8
       },
@@ -635,7 +726,8 @@
                 "value": null
               }
             ]
-          }
+          },
+          "noValue": "No recent observations"
         },
         "overrides": []
       },
@@ -654,10 +746,10 @@
       "id": 12,
       "title": "Worker attempt duration p95",
       "type": "timeseries",
-      "description": "Histogram estimate. Empty until jobs occur in the rate window; bucket boundaries limit precision.",
+      "description": "Histogram estimate. Empty until jobs occur in the rate window; bucket boundaries limit precision. No recent requests/jobs means no latency estimate; zero is not substituted for missing observations.",
       "gridPos": {
         "x": 12,
-        "y": 24,
+        "y": 28,
         "w": 12,
         "h": 8
       },
@@ -691,7 +783,8 @@
                 "value": null
               }
             ]
-          }
+          },
+          "noValue": "No recent observations"
         },
         "overrides": []
       },
@@ -710,10 +803,10 @@
       "id": 13,
       "title": "Successful job end-to-end p95",
       "type": "timeseries",
-      "description": "Histogram estimate. Empty until jobs occur in the rate window; bucket boundaries limit precision.",
+      "description": "Histogram estimate. Empty until jobs occur in the rate window; bucket boundaries limit precision. No recent requests/jobs means no latency estimate; zero is not substituted for missing observations.",
       "gridPos": {
         "x": 0,
-        "y": 32,
+        "y": 36,
         "w": 12,
         "h": 8
       },
@@ -747,7 +840,8 @@
                 "value": null
               }
             ]
-          }
+          },
+          "noValue": "No recent observations"
         },
         "overrides": []
       },
@@ -769,7 +863,7 @@
       "description": "",
       "gridPos": {
         "x": 12,
-        "y": 32,
+        "y": 36,
         "w": 12,
         "h": 8
       },
