@@ -34,7 +34,7 @@ class ASGIClient:
     async def post(self, path, *, json):
         return await self.request("POST", path, body=json)
 
-    async def request(self, method, path, body=None):
+    async def request(self, method, path, body=None, headers=None):
         url = urlsplit(path)
         payload = b"" if body is None else json.dumps(body).encode()
         messages = []
@@ -48,7 +48,7 @@ class ASGIClient:
         scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
                  "http_version": "1.1", "method": method, "scheme": "http",
                  "path": url.path, "raw_path": url.path.encode(), "query_string": url.query.encode(),
-                 "root_path": "", "headers": [(b"content-type", b"application/json")],
+                 "root_path": "", "headers": [(b"content-type", b"application/json")] + [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
                  "server": ("test", 80), "client": ("127.0.0.1", 1234)}
         try:
             await self.app(scope, receive, send)
@@ -191,9 +191,8 @@ class ApiWorkflowLoggingTests(IsolatedAsyncioTestCase):
         self.executor.shutdown(wait=True)
 
     async def test_classification_logs_committed_id_and_never_input_text(self):
-        # Return-first: the logged id is pre-generated and echoed in the
-        # response; persistence happens in background with its own session.
-        with patch("app.api.routes.save_classification", AsyncMock()) as persisted, \
+        canonical_id = uuid4()
+        with patch("app.api.routes.save_classification", AsyncMock(return_value=canonical_id)) as persisted, \
                 self.assertLogs("app", level="INFO") as captured:
             response = await self.client.post("/v1/classify", json={"text": "PRIVATE CLIENT COMMENT"})
         self.assertEqual(response.status_code, 200)
@@ -203,16 +202,16 @@ class ApiWorkflowLoggingTests(IsolatedAsyncioTestCase):
         self.assertEqual(completed["request_id"], response.headers["x-request-id"])
         self.assertNotIn("PRIVATE CLIENT COMMENT", json.dumps(records))
         persisted.assert_awaited_once()
+        self.assertEqual(json.loads(response.body)["classification_id"], str(canonical_id))
 
-    async def test_database_failure_still_returns_but_never_false_success(self):
-        # Return-first: a persistence failure logs in background and never
-        # fails the already-returned 200, and no input text leaks.
+    async def test_database_failure_returns_503_without_false_success(self):
+        # Failed commits cannot return a successful, unresolvable ID.
         with patch("app.api.routes.save_classification", AsyncMock(side_effect=SQLAlchemyError("PRIVATE SQL PARAMS"))), \
                 self.assertLogs("app", level="INFO") as captured:
             response = await self.client.post("/v1/classify", json={"text": "private text"})
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 503)
         records = formatted(captured.records)
-        self.assertIn("classification.completed", [r["event"] for r in records])
+        self.assertNotIn("classification.completed", [r["event"] for r in records])
         self.assertNotIn("PRIVATE SQL PARAMS", json.dumps(records))
 
     async def test_classification_batch_reports_size_without_texts(self):

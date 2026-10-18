@@ -20,7 +20,7 @@ Sources: [saved model configuration](../models/distilbert/v2.0.0/config.json), [
 
 The runtime validates the saved label order and output count before constructing the services. It also checks tokenizer compatibility and the configured token limit. These structural checks do not establish model quality or artifact provenance.
 
-`model_info()` currently exposes the architecture and serving settings, not a release identifier or artifact fingerprint. The manifest supplies offline identity; adding a public version field is a separate implementation decision.
+`GET /v1/model_info` exposes the architecture, serving settings, input limits, and packaged release identifier. It does not expose an artifact fingerprint; the manifest supplies offline artifact identity.
 
 ## Label order and thresholds
 

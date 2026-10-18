@@ -9,3 +9,5 @@ class ModelInfo:
     max_length: int
     explanation_steps: int
     inference_backend: str = "onnx"
+    max_text_chars: int = 10_000
+    max_prediction_batch_size: int = 64

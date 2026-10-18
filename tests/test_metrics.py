@@ -70,15 +70,14 @@ class ApiMetricsTests(IsolatedAsyncioTestCase):
             self.assertEqual(self.sample("http_request_duration_seconds_count", {"method": "POST", "route": route}), 1)
         self.assertNotIn(b"PRIVATE", generate_latest(self.app.state.metrics.registry))
 
-    async def test_failed_background_persistence_still_counts_inference(self):
-        # Return-first: inference metrics count at serve time; a background
-        # persistence failure never un-counts the returned prediction.
+    async def test_failed_commit_does_not_count_successful_classification(self):
+        # Only committed classifications count as successfully served.
         with patch("app.api.routes.save_classification", AsyncMock(side_effect=SQLAlchemyError("private parameters"))):
-            self.assertEqual((await self.client.post("/v1/classify", json={"text": "hello"})).status_code, 200)
+            self.assertEqual((await self.client.post("/v1/classify", json={"text": "hello"})).status_code, 503)
         self.runtime.predict.side_effect = RuntimeError("private input")
         self.assertEqual((await self.client.post("/v1/classify", json={"text": "hello"})).status_code, 500)
-        self.assertEqual(self.sample("classification_items_total"), 1)
-        for status in ("200", "500"):
+        self.assertEqual(self.sample("classification_items_total"), 0)
+        for status in ("503", "500"):
             self.assertEqual(self.sample("http_requests_total", {"method": "POST", "route": "/v1/classify", "status_code": status}), 1)
 
     async def test_route_templates_and_unknown_methods_have_bounded_labels(self):

@@ -69,7 +69,9 @@ def build_services(settings: RuntimeSettings) -> ApplicationServices:
         thresholds=settings.thresholds,
         max_length=settings.max_length,
         explanation_steps=settings.n_steps,
-        inference_backend=settings.inference_backend
+        inference_backend=settings.inference_backend,
+        max_text_chars=settings.max_text_chars,
+        max_prediction_batch_size=settings.max_prediction_batch_size,
         )
 
     return ApplicationServices(

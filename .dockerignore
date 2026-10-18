@@ -41,3 +41,6 @@
 **/.DS_Store
 **/.env*
 app/api/_main.py
+
+# Static frontend builds independently on Cloudflare Pages.
+frontend/

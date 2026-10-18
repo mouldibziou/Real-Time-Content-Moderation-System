@@ -56,6 +56,8 @@ class TritonRuntime:
                 labels=self._settings.labels, thresholds=self._settings.thresholds,
                 max_length=self._settings.max_length, explanation_steps=self._settings.n_steps,
                 inference_backend="triton",
+                max_text_chars=self._settings.max_text_chars,
+                max_prediction_batch_size=self._settings.max_prediction_batch_size,
             )
         except BaseException:
             self._state = RuntimeState.STOPPED

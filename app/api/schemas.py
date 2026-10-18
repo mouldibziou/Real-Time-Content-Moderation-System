@@ -116,6 +116,9 @@ class ModelInfoResponse(BaseModel):
     max_length: int = Field(ge=1)
     explanation_steps: int = Field(ge=1)
     inference_backend: str
+    model_version: str
+    max_text_chars: int = Field(ge=1)
+    max_prediction_batch_size: int = Field(ge=1)
 
 class ReadinessResponse(BaseModel):
     model_config = {"extra": "forbid"}

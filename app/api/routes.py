@@ -6,7 +6,7 @@ import logging
 from time import monotonic
 from typing import Annotated
 from uuid import uuid4, UUID
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.params import Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -126,10 +126,10 @@ async def health_check() -> dict[str, str]:
     "/classify",
     response_model=ClassifyResponse,
     summary="Classify one comment",
-    description="Scores text on all 6 labels. Returns immediately with a classification_id; row persists in background. Use the id for strict explain. Example: {\"text\": \"You are an idiot\"}.",
+    description="Scores text on all 6 labels. Returns a committed canonical classification_id; duplicate text reuses its stored ID. Use the id for strict explain. Example: {\"text\": \"You are an idiot\"}.",
 )
 async def classify_text(
-    background_tasks: BackgroundTasks,
+    db: Annotated[AsyncSession, Depends(get_db)],
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
     executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
     snapshot: Annotated[dict, Depends(get_model_snapshot)],
@@ -146,14 +146,14 @@ async def classify_text(
     result = await _call_runtime(runtime.predict, executor, text) # NOTE: Next time figure this out BETTER
     classification_id = uuid4()
 
-    # Return-first: snapshot plain data and persist after responding.
-    # Model metadata comes lock-free from lifespan state, not per-call.
+    # Commit before responding so every returned ID resolves immediately.
+    # Repository deduplication returns the original ID for repeated inputs.
     labels_plain = {
         label: {"probability": pred.probability, "predicted": pred.predicted}
         for label, pred in result.labels.items()
     }
-    background_tasks.add_task(
-        _persist_classification,
+    classification_id = await save_classification(
+        db,
         id=classification_id,
         text=text,
         text_hash=sha256(text.encode("utf-8")).hexdigest(),
@@ -175,46 +175,14 @@ async def classify_text(
         "classification_id": classification_id
     }
 
-async def _persist_classification(
-        *,
-        id: UUID,
-        text: str,
-        text_hash: str,
-        model_version: str,
-        model_type: str,
-        device: str,
-        thresholds: list,
-        labels: dict,
-):
-    # Own fresh session: the request session closes before background runs.
-    # Failure only logs; response already returned (accepted loss window).
-    # NOTE: logger kept minimal here. Full structured logging is a separate
-    # project task; this exception line is mandatory so background loss is
-    # never silent.
-    try:
-        async with async_session() as session:
-            await save_classification(
-                session,
-                id=id,
-                text=text,
-                text_hash=text_hash,
-                model_version=model_version,
-                model_type=model_type,
-                device=device,
-                thresholds=thresholds,
-                labels=labels,
-            )
-    except Exception:
-        logger.exception("background persist failed for classification %s", id)
-
 @router.post(
     "/classify_batch",
     response_model=ClassifyBatchResponse,
     summary="Classify a batch",
-    description="Scores 1..N texts in input order, returns immediately with ids; rows persist in background. Example: {\"texts\": [\"You are an idiot\", \"Thanks for helping\"]}.",
+    description="Scores 1..N texts in input order, returns committed canonical IDs, with duplicates preserved in input order. Example: {\"texts\": [\"You are an idiot\", \"Thanks for helping\"]}.",
 )
 async def classify_batch(
-    background_tasks: BackgroundTasks,
+    db: Annotated[AsyncSession, Depends(get_db)],
     runtime: Annotated[ApplicationRuntime, Depends(get_runtime)],
     executor: Annotated[ThreadPoolExecutor, Depends(get_executor)],
     snapshot: Annotated[dict, Depends(get_model_snapshot)],
@@ -241,7 +209,7 @@ async def classify_batch(
         }
         for cid, text, r in zip(ids, texts, results)
     ]
-    background_tasks.add_task(_persist_classifications_batch, items=items)
+    ids = await save_classifications_batch(db, items=items)
     if (metrics := current_api_metrics()) is not None:
         metrics.record_predictions(results)
     bind_context(stage="response")
@@ -253,14 +221,6 @@ async def classify_batch(
             for text, r, cid in zip(texts, results, ids)
         ]
     }
-
-async def _persist_classifications_batch(*, items: list[dict]):
-    # Same return-first contract as single: own session, log-only on failure.
-    try:
-        async with async_session() as session:
-            await save_classifications_batch(session, items=items)
-    except Exception:
-        logger.exception("background persist failed for %d classifications", len(items))
 
 @router.post(
     "/explain",
@@ -514,6 +474,9 @@ def _model_info_to_list(info: ModelInfo) -> dict:
         "max_length": info.max_length,
         "explanation_steps": info.explanation_steps,
         "inference_backend": info.inference_backend,
+        "model_version": MODEL_VERSION,
+        "max_text_chars": info.max_text_chars,
+        "max_prediction_batch_size": info.max_prediction_batch_size,
     }
 
 def _status_to_list(status: RuntimeStatus):

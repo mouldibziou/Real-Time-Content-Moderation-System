@@ -174,7 +174,7 @@ class TritonRuntimeTests(IsolatedAsyncioTestCase):
             await TritonRuntime(self.settings, client=client).start()
         self.assertTrue(client.is_closed)
 
-    async def test_api_keeps_independent_ids_and_background_writes(self):
+    async def test_api_commits_ids_before_sending_response(self):
         from app.api.main import create_app
         from concurrent.futures import ThreadPoolExecutor
         from tests.test_application_logging import ASGIClient
@@ -192,13 +192,19 @@ class TritonRuntimeTests(IsolatedAsyncioTestCase):
                     sent_ids.add(json.loads(message["body"])["classification_id"])
             await app(scope, receive, observe)
 
-        async def persisted(**item):
-            self.assertIn(str(item["id"]), sent_ids, "Persistence began before the response body was sent")
+        from app.db.engine import get_db
+        async def fake_db():
+            yield Mock()
+        app.dependency_overrides[get_db] = fake_db
+
+        async def persisted(session, **item):
+            self.assertNotIn(str(item["id"]), sent_ids, "Response was sent before persistence")
+            return item["id"]
 
         client = ASGIClient(observe_response)
         persist = AsyncMock(side_effect=persisted)
         try:
-            with patch("app.api.routes._persist_classification", persist):
+            with patch("app.api.routes.save_classification", persist):
                 responses = await asyncio.gather(*[client.post("/v1/classify", json={"text": "x" * i}) for i in range(1, 9)])
             payloads = [json.loads(r.body) for r in responses]
             self.assertTrue(all(r.status_code == 200 for r in responses))

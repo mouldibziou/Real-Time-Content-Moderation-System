@@ -74,6 +74,7 @@ services:
     expose: ["9100"]
     environment:
       API_METRICS_PORT: "9100"
+      TOXICITY_CORS_ORIGINS: ${TOXICITY_CORS_ORIGINS:-}
       UVICORN_LIMIT_CONCURRENCY: ${API_LIMIT_CONCURRENCY:-64}
       DATABASE_URL: postgresql+asyncpg://toxicity:replace-me@db:5432/toxicity
       REDIS_URL: redis://redis:6379/0

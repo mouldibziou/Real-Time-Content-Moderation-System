@@ -41,14 +41,14 @@ workers, because queues and model weights are per-process.
 - `GET /health/live`: process alive, no deps, always 200 when Python
   answers. Restart on failure.
 - `GET /health/ready`: model ready boolean. Orchestrator traffic gate.
-  Runtime only; DB outages do not fail it (return-first degraded mode).
+  Checks the model/Triton and PostgreSQL; outages return 503.
 - `GET /status`: queue depths and capacities for backpressure dashboards.
 - `GET /model_info`: type, device, labels, thresholds snapshot.
 - `POST /classify {text}`: sync pool inference (~50 ms isolated),
-  returns `{text, labels, classification_id}` immediately, row persists
-  in background. Duplicate hashes ignored via unique, never errors.
-- `POST /classify_batch {texts[]}`: same in input order, one background
-  transaction with per-item duplicate skip.
+  returns `{text, labels, classification_id}` after commit. Repeated text
+  reuses the canonical stored ID. Database failures return 503.
+- `POST /classify_batch {texts[]}`: same in input order, one committed
+  transaction with canonical duplicate IDs.
 - `POST /explain {classification_id, label}`: strict 404 if unknown.
   Cache hit returns 200 spans with zero GPU. Miss creates-or-returns an
   idempotent job and returns 202 `{job_id}`; worker computes.
@@ -73,8 +73,8 @@ workers, because queues and model weights are per-process.
 wins for display, `explanations` one row per `(classification_id, label,
 model_version)` as a GPU cache, `explanation_jobs` tracking
 `queued|running|done|failed` with the same triple unique for idempotent
-repeats. Classify writes return-first with own-session background tasks
-(log-only on failure; durable retry is tracked future work). Explains are
+repeats. Classification responses wait for repository commit, so returned IDs are
+immediately addressable; batch failure rolls back the whole transaction. Explains are
 fully async: API enqueues, worker drains up to 4 per wake grouped by
 label, one pooled batch per group, per-job failure isolation, boot
 rebuild from `queued` rows. Redis holds no truth.
@@ -92,3 +92,11 @@ One image, two roles: API pods (classify hot, explains enqueue only)
 and worker pods (`python -m app.worker`, own models). Postgres and Redis
 shared. Ingress routes by path; HPA scales pools independently. Lockfile
 regen required before image builds for new deps.
+
+## Public frontend
+
+`frontend/README.md` documents the Cloudflare Pages build, exact-origin CORS via
+`TOXICITY_CORS_ORIGINS`, and the restricted Caddy demo route allowlist.
+`model_info` includes `model_version`, `max_text_chars`, and
+`max_prediction_batch_size`. The previously measured return-first latency is
+historical until the commit-before-response route is rebenchmarked.

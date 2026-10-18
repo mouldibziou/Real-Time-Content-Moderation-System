@@ -6,6 +6,7 @@ import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, start_http_server
 from concurrent.futures import ThreadPoolExecutor
@@ -136,6 +137,10 @@ def create_app(
         # Middleware already logged the error. Starlette renders this response
         # outside that middleware, so attach its correlation ID here as well.
         headers = {"X-Request-ID": request.state.request_id} if hasattr(request.state, "request_id") else {}
+        origin = request.headers.get("origin")
+        if origin in settings.cors_origins:
+            headers.update({"Access-Control-Allow-Origin": origin, "Vary": "Origin",
+                            "Access-Control-Expose-Headers": "X-Request-ID"})
         return PlainTextResponse("Internal Server Error", status_code=500, headers=headers)
 
     # Centralized domain -> HTTP mapping. Routes let these bubble;
@@ -165,6 +170,13 @@ def create_app(
     app.include_router(
         router
     )
+    # Add CORS outside the request middlewares for translated API errors.
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware, allow_origins=list(settings.cors_origins),
+            allow_credentials=False, allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type"], expose_headers=["X-Request-ID"],
+        )
 
     return app
 

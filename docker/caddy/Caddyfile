@@ -1,0 +1,47 @@
+{
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$API_HOSTNAME} {
+	request_body {
+		max_size 8MB
+	}
+
+	@classify {
+		path /v1/classify /v1/classify_batch
+		method POST OPTIONS
+	}
+	handle @classify {
+		reverse_proxy api:8000
+	}
+
+	@health {
+		path /v1/health/live /v1/health/ready
+		method GET HEAD
+	}
+	handle @health {
+		reverse_proxy api:8000
+	}
+
+	@demo_reads {
+		path /v1/model_info /v1/jobs/* /v1/classifications/*
+		method GET OPTIONS
+	}
+	handle @demo_reads {
+		reverse_proxy api:8000
+	}
+
+	@demo_writes {
+		path /v1/explain /v1/classifications/*/corrections
+		method POST OPTIONS
+	}
+	handle @demo_writes {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		respond "Not Found" 404
+	}
+}

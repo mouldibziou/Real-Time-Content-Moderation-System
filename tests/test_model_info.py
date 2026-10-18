@@ -50,7 +50,7 @@ class ModelInfoTests(TestCase):
         self.assertEqual(result.device, "cpu")
         self.assertEqual(set(asdict(result)), {
             "model_type", "device", "labels", "thresholds", "max_length", "explanation_steps",
-            "inference_backend",
+            "inference_backend", "max_text_chars", "max_prediction_batch_size",
         })
 
     def test_metadata_returns_while_explanation_is_running(self):

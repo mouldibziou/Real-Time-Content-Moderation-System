@@ -51,8 +51,16 @@ class RuntimeSettings:
     operation_wait_timeout_seconds: float = 5.0 # NOTE: operation timeout should not heavily exceed the final expected latency (p99, p95)
     max_prediction_batch_size: int = 64
     max_explanation_batch_size: int = 4
+    cors_origins: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        from urllib.parse import urlsplit
+        for origin in self.cors_origins:
+            parsed = urlsplit(origin)
+            if (parsed.scheme not in ("http", "https") or not parsed.hostname
+                    or parsed.username or parsed.password or parsed.path
+                    or parsed.query or parsed.fragment or "*" in origin):
+                raise ValueError("CORS origins must be exact HTTP(S) origins without paths or credentials")
         if type(self.cpu_threads) is not int or self.cpu_threads < 0:
             raise ValueError("CPU threads must be a nonnegative integer; 0 selects the container CPU budget")
         if type(self.inference_batch_size) is not int or self.inference_batch_size < 1:
@@ -138,6 +146,8 @@ def load_runtime_settings(environ: Mapping[str, str] | None = None) -> RuntimeSe
     """
     environment = dict(os.environ if environ is None else environ)
     overrides = {}
+    if "TOXICITY_CORS_ORIGINS" in environment:
+        overrides["cors_origins"] = tuple(origin.strip() for origin in environment["TOXICITY_CORS_ORIGINS"].split(",") if origin.strip())
     for variable, field, convert in (
         ("TOXICITY_DEVICE", "device", str),
         ("TOXICITY_CPU_THREADS", "cpu_threads", int),

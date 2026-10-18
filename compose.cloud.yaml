@@ -59,6 +59,7 @@ services:
     expose: ["9100"]
     environment:
       API_METRICS_PORT: "9100"
+      TOXICITY_CORS_ORIGINS: ${TOXICITY_CORS_ORIGINS:-}
       UVICORN_LIMIT_CONCURRENCY: ${API_LIMIT_CONCURRENCY:-64}
       <<: *environment
       TOXICITY_CPU_THREADS: ${API_CPU_THREADS:-0}
