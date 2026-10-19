@@ -10,6 +10,42 @@ import {
 import { Architecture } from "./Architecture";
 const repo =
   "https://github.com/mouldibziou/Real-Time-Content-Moderation-System";
+function UseCaseHighlights() {
+  return (
+    <div className="platform-highlights wrap" aria-label="Moderation use case examples">
+      <span className="mono">MODERATION USE CASES</span>
+      <ul>
+        <li>
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+            <path d="M14 3h3a5 5 0 0 0 4 4v3a8 8 0 0 1-4-1.2V16a6 6 0 1 1-6-6h1v3h-1a3 3 0 1 0 3 3Z" />
+          </svg>
+          TikTok comments
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+            <path d="M12 3C6.5 3 2 6.9 2 11.8c0 2.7 1.4 5.2 3.7 6.8V22l3.2-1.8c1 .3 2 .4 3.1.4 5.5 0 10-3.9 10-8.8S17.5 3 12 3Z" />
+            <path d="m6.4 14.8 4.7-5 2.8 2.1 3.7-2.7-4.7 5-2.8-2.1Z" fill="var(--paper)" />
+          </svg>
+          Messenger chats
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20.5 11.7a8.5 8.5 0 0 1-12.7 7.4L3 20.5l1.4-4.7a8.5 8.5 0 1 1 16.1-4.1Z" />
+            <path d="m8.4 7.4 1.4 2.8-1.1 1.1a8.1 8.1 0 0 0 4 4l1.1-1.1 2.8 1.4c-.2 1.4-1.2 2-2.5 1.7-4.1-1-7-3.9-8-8-.3-1.3.3-2.3 1.7-2.5Z" transform="translate(1 -1) scale(.95)" />
+          </svg>
+          WhatsApp groups
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M3 9h18M10 9v11M6 6.5h.01M8.5 6.5h.01M13 12h5M13 15h5M13 18h3" />
+          </svg>
+          Content platforms
+        </li>
+      </ul>
+    </div>
+  );
+}
 function HeroSketch() {
   return (
     <div
@@ -365,6 +401,7 @@ export function Landing() {
             <span className="context-icon">◫</span>Chat applications
           </div>
         </div>
+        <UseCaseHighlights />
         <section id="how-it-works" className="section wrap">
           <SectionLabel number="01">FROM TEXT TO UNDERSTANDING</SectionLabel>
           <div className="section-heading" data-reveal>
@@ -629,6 +666,50 @@ export function Landing() {
           </a>
           <div className="closing-sketch" aria-hidden="true">
             ↳
+          </div>
+        </section>
+        <section id="contact" className="contact-section wrap" aria-labelledby="contact-heading">
+          <SectionLabel number="06">LET'S BUILD BETTER CONVERSATIONS</SectionLabel>
+          <div className="contact-layout" data-reveal>
+            <div className="contact-copy">
+              <h2 id="contact-heading">
+                Bring Flagged<br />
+                <span className="muted">to your platform.</span>
+              </h2>
+              <p>
+                Want to use the backend API directly? Get in touch to discuss
+                your use case, integration, and API access.
+              </p>
+            </div>
+            <div className="contact-links">
+              <a className="contact-link" href="mailto:bzioumohamedmouldi@gmail.com">
+                <span className="contact-mark" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="5" width="18" height="14" rx="1" />
+                    <path d="m3 6 9 7 9-7" />
+                  </svg>
+                </span>
+                <span className="contact-link-copy">
+                  <span className="mono">EMAIL / SAY HELLO</span>
+                  <span>bzioumohamedmouldi@gmail.com</span>
+                </span>
+                <Arrow diagonal />
+              </a>
+              <a className="contact-link" href="https://www.linkedin.com/in/mohamedmouldibziou/" target="_blank" rel="noreferrer">
+                <span className="contact-mark" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="3" y="9" width="4" height="12" rx=".5" />
+                    <circle cx="5" cy="5" r="2" />
+                    <path d="M10 9h4v1.5a4.7 4.7 0 0 1 3.8-1.8c3.2 0 4.2 2 4.2 5.2V21h-4v-6.3c0-1.6-.3-2.8-1.9-2.8-1.7 0-2.1 1.3-2.1 2.8V21h-4Z" />
+                  </svg>
+                </span>
+                <span className="contact-link-copy">
+                  <span className="mono">LINKEDIN / LET'S CONNECT</span>
+                  <span>Discuss your next integration</span>
+                </span>
+                <Arrow diagonal />
+              </a>
+            </div>
           </div>
         </section>
       </main>
