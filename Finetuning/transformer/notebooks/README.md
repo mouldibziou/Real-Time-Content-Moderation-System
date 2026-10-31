@@ -2,6 +2,11 @@
 
 This notebook folder compares multiple pretrained transformer encoders for multilabel toxic comment classification, starting with a feature extraction setup and later proceeding to full fine-tuning of the strongest candidates.
 
+These are historical research notebooks and reported development results, not
+verified held-out test scores. Data and model artifacts are excluded from Git;
+local/Kaggle paths in the experiments need adapting to your environment. See the
+[model card](../../../MODEL_CARD.md) for serving artifacts and evaluation limits.
+
 ## Evaluated Models
 
 * RoBERTa-base
@@ -94,7 +99,9 @@ Before threshold optimization, the 6th-epoch models achieved:
 
 ### Threshold Fine-Tuning After Epoch 6
 
-Threshold fine-tuning was repeated on the final 6th-epoch checkpoints.
+Threshold fine-tuning was repeated on the final 6th-epoch checkpoints. The
+threshold notebook selects each label's threshold using F2 on development data;
+the macro F1 values below are evaluation results, not the selection objective.
 
 Final macro F1 scores:
 
@@ -139,7 +146,7 @@ The model selection may be revisited after further fine-tuning or experimentatio
 
 ## Comparison With Baseline
 
-Baseline test performance from the classical machine learning pipeline:
+Reported baseline development performance from the classical machine learning pipeline:
 
 * Micro F1: `0.69`
 * Macro F1: `0.64`

@@ -4,6 +4,9 @@ Multilabel toxic comment classifier with 6 labels: `toxic`, `severe_toxic`, `obs
 `threat`, `insult`, `identity_hate`. A manual One-vs-Rest Logistic Regression is used, 
 fitting one binary classifier per label independently.
 
+This is the historical research baseline, not the deployed classifier. See the
+[model card](../../../MODEL_CARD.md) for the serving release and evaluation scope.
+
 ---
 
 ## Results
@@ -14,11 +17,10 @@ fitting one binary classifier per label independently.
 | Dev   | 0.69     | 0.64     |
 | Gap   | 0.05     | 0.00     |
 
-The negligible train/dev gap confirms the model has neither a significant bias nor 
-variance problem. The persistent gap between micro avg (0.74) and macro avg (0.64) 
-is explained by class imbalance — `severe_toxic`, `threat`, and `identity_hate` have 
-very few positive examples, pulling macro F1 down despite reasonable performance on 
-frequent labels.
+These are recorded development results. Similar train/dev macro F1 alone does not
+establish the absence of underfitting or overfitting. The rare labels
+`severe_toxic`, `threat`, and `identity_hate` have limited positive support, so
+micro and macro averages should be read alongside per-label scores.
 
 ---
 
@@ -62,8 +64,8 @@ has limited signal on those labels due to low positive support.
 - **Rare label metrics are unreliable** — `severe_toxic` (62 dev positives), 
   `threat` (46), and `identity_hate` (110) have insufficient dev support for 
   statistically stable evaluation. Treat their scores with caution.
-- **Underfitting on frequent labels** — `toxic`, `obscene`, and `insult` converge 
-  at F1 ~0.68–0.73, indicating the architecture has reached its capacity ceiling.
+- **Limited frequent-label performance** — recorded F1 for `toxic`, `obscene`, and
+  `insult` is approximately 0.68–0.73; this motivated comparison with contextual encoders.
 - **TF-IDF loses context** — character n-grams partially capture misspellings and 
   obfuscation (e.g. "st*pid") but cannot capture word order, sarcasm, or semantic 
   meaning.
@@ -71,7 +73,6 @@ has limited signal on those labels due to low positive support.
 ---
 
 ## Next Steps
-The TF-IDF + Logistic Regression combination has reached a bottleneck. Moving 
-forward, fine-tuning a transformer-based model (e.g. BERT) is the natural next step. 
-This will capture richer semantic representations, reduce false negatives on rare 
-labels, and is expected to improve scores across the board.
+The next experiment compared contextual transformer encoders and end-to-end
+fine-tuning. See the [transformer experiment notes](../../transformer/notebooks/README.md)
+for the recorded results.
